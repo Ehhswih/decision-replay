@@ -35,8 +35,16 @@ export interface CheckContext {
   alwaysSources?: string[];
   /** 整个证据包的文本，用来核对没有引用字段的叙述 */
   packTexts?: string[];
+  /** 证据包里的证据编号：模型偶尔把 calc:vscost:t1 简写成 calc:vscost，只有唯一匹配时才补全 */
+  packIds?: string[];
   log: LogEntry[];
   stage: string;
+}
+
+function resolveId(id: string, ctx: CheckContext): string {
+  if (ctx.evidence.has(id) || !ctx.packIds) return id;
+  const hits = ctx.packIds.filter((p) => p.startsWith(`${id}:`));
+  return hits.length === 1 ? hits[0] : id;
 }
 
 const NUM = /-?\d+(?:\.\d+)?/g;
@@ -71,7 +79,7 @@ const asConf = (v: unknown): Claim["confidence"] => (v === "high" || v === "low"
 export function checkClaim(raw: RawClaim, ctx: CheckContext, opts: { checkNumbers?: boolean } = {}): Claim | null {
   const text = typeof raw.text === "string" ? raw.text.trim() : "";
   if (!text) return null;
-  const ids = Array.isArray(raw.evidence_ids) ? raw.evidence_ids.filter((x): x is string => typeof x === "string") : [];
+  const ids = Array.isArray(raw.evidence_ids) ? raw.evidence_ids.filter((x): x is string => typeof x === "string").map((id) => resolveId(id, ctx)) : [];
   const drop = (reason: string) => {
     ctx.log.push({ stage: ctx.stage, text, reason });
     return null;

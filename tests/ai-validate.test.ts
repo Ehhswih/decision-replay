@@ -145,3 +145,14 @@ describe("B8 相关性", () => {
     expect(resolveB8(b, [{ evidenceId: "a1", addressed: false, relevant: false }], new Map([["a1", a1]])).outcome).toBe("undetermined");
   });
 });
+
+describe("证据编号补全", () => {
+  it("简写的编号只有唯一匹配时才补全，多个匹配仍然算不存在", () => {
+    const e = (id: string): Evidence => ({ id, kind: "computed", title: id, source: "程序计算", eventTime: 0, availableAt: 0, precision: "ms", fetchedAt: null, status: "ok", value: 9.4 });
+    const evidence = new Map([e("calc:vscost:s1"), e("calc:runup3:s1"), e("calc:runup3:s2")].map((x) => [x.id, x]));
+    const ctx = { evidence, log: [] as { stage: string; text: string; reason: string }[], stage: "t", textOf: (x: Evidence) => `${x.title} ${x.value}`, packIds: [...evidence.keys()] };
+    expect(checkClaim({ text: "卖出时相对成本 -9.4%", evidence_ids: ["calc:vscost"] }, ctx)?.evidenceIds).toEqual(["calc:vscost:s1"]);
+    expect(checkClaim({ text: "卖出前 3 天跌了 9.4%", evidence_ids: ["calc:runup3"] }, ctx)).toBeNull();
+    expect(ctx.log.at(-1)?.reason).toContain("引用的证据不存在");
+  });
+});

@@ -48,7 +48,7 @@ export default function ChecklistPage() {
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
-        <h1 className="text-2xl font-semibold">我的清单</h1>
+        <h1 className="text-[1.75rem] font-semibold tracking-tight">我的清单</h1>
         <p className="text-sm text-muted-foreground mt-1">
           从复盘里带出来的检查动作。启用的条目会在「决策前检查」里逐条套到你要交易的股票上；带类型的条目（追涨、追热点等）能自动核对数据，其余需要你自己对照。
         </p>
@@ -57,14 +57,14 @@ export default function ChecklistPage() {
       {items === null ? (
         <p className="text-muted-foreground">正在读取……</p>
       ) : items.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm">
+        <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center text-sm">
           <p className="text-muted-foreground mb-3">清单还是空的。打开一笔复盘，在「下次可以做什么」里把认可的教训加进来。</p>
           <Link href="/decisions" className="text-exante underline underline-offset-2">
             去我的决策
           </Link>
         </div>
       ) : (
-        <ul className="rounded-lg border border-border bg-card divide-y divide-border">
+        <ul className="panel divide-y divide-border">
           {items.map((it) => (
             <li key={it.id} className="p-4 flex gap-4 items-start">
               <Switch checked={it.enabled} onCheckedChange={(v) => patch(it.id, { enabled: v })} aria-label={it.enabled ? "停用这一条" : "启用这一条"} className="mt-0.5" />
@@ -122,7 +122,7 @@ export default function ChecklistPage() {
         </ul>
       )}
 
-      <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+      <div className="panel p-4 space-y-2">
         <label htmlFor="new-item" className="text-sm font-medium">
           自己写一条
         </label>

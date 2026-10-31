@@ -33,7 +33,7 @@ export default function StatusPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">数据状态</h1>
+        <h1 className="text-[1.75rem] font-semibold tracking-tight">数据状态</h1>
         <p className="text-sm text-muted-foreground mt-1">每一次外部调用都有记录。数据取不到、过期或被降级时，复盘页面会在「数据源提示」和「不确定因素」里说明，不会当作正常。</p>
       </div>
 
@@ -44,7 +44,7 @@ export default function StatusPage() {
           ["DeepSeek", s.config.deepseek, `模型 ${s.config.model}`],
           ["本地缓存", true, `${s.cache.reduce((a, c) => a + c.n, 0)} 条；24 小时内命中 ${cached} 次`],
         ].map(([name, ok, note]) => (
-          <div key={name as string} className="rounded-lg border border-border bg-card p-4">
+          <div key={name as string} className="panel p-4">
             <div className="flex items-center justify-between">
               <span className="font-medium text-sm">{name}</span>
               <Tag tone={ok ? "ok" : "danger"}>{ok ? "已配置" : "未配置"}</Tag>
@@ -54,8 +54,8 @@ export default function StatusPage() {
         ))}
       </div>
 
-      <section className="rounded-lg border border-border bg-card p-5">
-        <h2 className="text-[15px] font-semibold mb-3">当前组合用到的数据源</h2>
+      <section className="panel p-5">
+        <h2 className="text-[15px] font-semibold tracking-tight mb-3">当前组合用到的数据源</h2>
         <ul className="grid md:grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
           {s.sources.map((x) => (
             <li key={x.key} className="flex flex-wrap items-center gap-2">
@@ -68,8 +68,8 @@ export default function StatusPage() {
         </ul>
       </section>
 
-      <section className="rounded-lg border border-border bg-card p-5">
-        <h2 className="text-[15px] font-semibold mb-3">最近 24 小时的实际调用</h2>
+      <section className="panel p-5">
+        <h2 className="text-[15px] font-semibold tracking-tight mb-3">最近 24 小时的实际调用</h2>
         <div className="flex flex-wrap gap-3 text-sm mb-4">
           {live.map((x) => (
             <span key={x.source + x.status} className="rounded border border-border px-2 py-1">

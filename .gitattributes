@@ -2,3 +2,6 @@
 * text=auto eol=lf
 *.ico binary
 *.png binary
+# GBK 编码的交割单测试数据，按原样保存，不做换行转换
+tests/fixtures/*.csv -text
+public/sample-delivery-ths.csv -text

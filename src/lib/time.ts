@@ -63,7 +63,8 @@ export function parseShDateTime(raw: string): { ms: number; timeKnown: boolean }
   const date = normalizeDate(datePart ?? "");
   if (!date) return null;
   if (!timePart) return { ms: atShTime(date, 9, 30), timeKnown: false };
-  const t = timePart.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/) ?? timePart.match(/^(\d{2})(\d{2})(\d{2})?$/);
+  // 10:31、10:31:22、103122、1031，以及丢了前导 0 的 93122（09:31:22）
+  const t = timePart.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/) ?? timePart.match(/^(\d{1,2})(\d{2})(\d{2})$/) ?? timePart.match(/^(\d{2})(\d{2})$/);
   if (!t) return null;
   const hh = +t[1], mm = +t[2];
   if (hh > 23 || mm > 59) return null;

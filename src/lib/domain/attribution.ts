@@ -101,7 +101,9 @@ export function attribute(
     const e = byId.get(id);
     return !!e && CONTRARY_KINDS.has(e.kind) && e.tone !== "positive";
   };
-  const failed = fa?.text.trim() && fa.evidenceIds.some(contrary) ? fa : null;
+  // 没有记录理由就没有可以被推翻的假设；AI 自己都说“不足以确认”的也不算
+  const hedged = (t: string) => /不足以|无法确认|无法核对|不能确认|不能确定|难以确认|无法判断|尚不能/.test(t);
+  const failed = fa?.text.trim() && !hedged(fa.text) && buys.some((t) => !!t.reason?.trim()) && fa.evidenceIds.some(contrary) ? fa : null;
   // 相反的证据买入时已经能看到，就不是"事后才出现的意外"，优先归为看错了
   const failedExAnte = !!failed && failed.evidenceIds.some((id) => contrary(id) && classify(byId.get(id)!, firstBuy) === "ex_ante");
 

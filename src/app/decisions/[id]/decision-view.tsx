@@ -33,7 +33,8 @@ export default function DecisionView() {
   const [set, setSet] = useState<EvidenceSet | null>(null);
   const [rv, setRv] = useState<ReviewState>({ status: "none" });
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<"then" | "reveal">("then");
+  // 链接里带 ?view=reveal 时直接打开揭晓视图（数据加载完之前只渲染加载态，不会和服务端渲染不一致）
+  const [mode, setMode] = useState<"then" | "reveal">(() => (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "reveal" ? "reveal" : "then"));
   const [decisionId, setDecisionId] = useState<string | null>(null);
   const [open, setOpen] = useState<Evidence | null>(null);
   const [added, setAdded] = useState<Set<string>>(new Set());
@@ -46,6 +47,7 @@ export default function DecisionView() {
   const revealKey = `dr_revealed:${episodeId}`;
   const [revealedBefore, setRevealedBefore] = useState(() => {
     try {
+      if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("view") === "reveal") localStorage.setItem(revealKey, "1");
       return typeof window !== "undefined" && localStorage.getItem(revealKey) === "1";
     } catch {
       return false;
@@ -196,7 +198,17 @@ export default function DecisionView() {
       </div>
     );
   }
-  if (!episode || !set || !attribution || !decision) return <p className="text-muted-foreground">正在整理行情、事件和规则结果，第一次打开一个持仓段大约需要 20 秒……</p>;
+  if (!episode || !set || !attribution || !decision) {
+    return (
+      <div className="space-y-4" aria-busy>
+        <p className="text-sm text-muted-foreground">正在整理行情、事件和规则结果，第一次打开一个持仓段大约需要 20 秒……</p>
+        <div className="grid lg:grid-cols-[minmax(0,1fr)_360px] gap-5">
+          <div className="panel h-[440px] animate-pulse" />
+          <div className="panel h-[440px] animate-pulse" />
+        </div>
+      </div>
+    );
+  }
 
   const aiState =
     rv.status === "running" ? (
@@ -220,63 +232,90 @@ export default function DecisionView() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col lg:flex-row lg:items-end gap-4 justify-between">
-        <div>
-          <Link href="/decisions" className="text-xs text-muted-foreground hover:underline">
-            我的决策
-          </Link>
-          <h1 className="text-2xl font-semibold mt-1">
-            {episode.name ?? episode.code} <span className="text-base font-normal text-muted-foreground num">{episode.code}</span>
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1 num">
-            {fmtDate(episode.openTs)} 首次买入，{episode.closeTs ? `${fmtDate(episode.closeTs)} 清仓` : "尚未清仓"}，共 {episode.trades.length} 笔成交
-            {curtain ? (
-              <span className="ml-2 px-1.5 py-0.5 rounded curtain border border-border">收益已遮住</span>
-            ) : (
-              <span className={cn("ml-2 font-medium", pctClass(episode.returnPct))}>收益 {pct(episode.returnPct)}</span>
-            )}
-          </p>
-        </div>
-
-        <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
-          {points.length > 1 && (
-            <div className="flex items-center gap-1 text-xs" role="group" aria-label="选择决策点">
-              <span className="text-muted-foreground mr-1">决策点</span>
-              {points.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setDecisionId(t.id)}
-                  className={cn("px-2 py-1 rounded border num", t.id === decision.id ? "border-exante text-exante bg-exante/8" : "border-border text-muted-foreground hover:bg-muted")}
-                >
-                  {fmtDate(t.ts).slice(5)} {pointLabel(t)}
-                </button>
-              ))}
+      <div className="space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-end gap-5 justify-between">
+          <div className="min-w-0">
+            <nav aria-label="位置" className="text-xs text-muted-foreground">
+              <Link href="/decisions" className="hover:text-foreground hover:underline underline-offset-2">
+                我的决策
+              </Link>
+              <span className="mx-1.5">/</span>
+              <span>{episode.name ?? episode.code}</span>
+            </nav>
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mt-2">
+              <h1 className="text-[1.75rem] font-semibold tracking-tight">
+                {episode.name ?? episode.code} <span className="text-base font-normal text-muted-foreground num">{episode.code}</span>
+              </h1>
+              {curtain ? (
+                <span className="text-xs text-muted-foreground px-2.5 py-1 rounded-full curtain ring-1 ring-border">收益已遮住</span>
+              ) : (
+                <span className={cn("figure text-2xl font-semibold", pctClass(episode.returnPct))}>{pct(episode.returnPct)}</span>
+              )}
             </div>
-          )}
-          <div className="inline-flex rounded-lg border border-border bg-card p-1" role="group" aria-label="切换视角">
+            <p className="text-sm text-muted-foreground mt-1 num">
+              {/* 回到当时不透露清仓时间和之后的成交，否则就能推出拿了多久、有没有加仓 */}
+              {curtain
+                ? `${fmtDate(episode.openTs)} 首次买入，这是第 ${points.findIndex((t) => t.id === decision.id) + 1} 个决策点，之后的成交先遮住`
+                : `${fmtDate(episode.openTs)} 首次买入，${episode.closeTs ? `${fmtDate(episode.closeTs)} 清仓` : "尚未清仓"}，共 ${episode.trades.length} 笔成交`}
+            </p>
+          </div>
+
+          <div className="inline-flex self-start lg:self-auto rounded-full bg-muted p-1 ring-1 ring-border" role="group" aria-label="切换视角">
             <button
               onClick={() => setMode("then")}
               aria-pressed={curtain}
-              className={cn("px-4 py-1.5 rounded-md text-sm transition-colors", curtain ? "bg-exante text-white" : "text-muted-foreground hover:bg-muted")}
+              className={cn("px-5 py-2 rounded-full text-sm transition-colors", curtain ? "bg-exante text-on-accent font-medium shadow-sm" : "text-muted-foreground hover:text-foreground")}
             >
               回到当时
             </button>
             <button
               onClick={reveal}
               aria-pressed={!curtain}
-              className={cn("px-4 py-1.5 rounded-md text-sm transition-colors", !curtain ? "bg-expost text-white" : "text-muted-foreground hover:bg-muted")}
+              className={cn("px-5 py-2 rounded-full text-sm transition-colors", !curtain ? "bg-expost text-on-accent font-medium shadow-sm" : "text-muted-foreground hover:text-foreground")}
             >
               揭晓结果
             </button>
           </div>
         </div>
+
+        {points.length > 1 && (
+          <div className="flex items-start gap-4 overflow-x-auto pb-1" role="group" aria-label="选择决策点">
+            <span className="text-xs text-muted-foreground pt-[1px] shrink-0">决策点</span>
+            <ol className="flex items-start min-w-max">
+              {points.map((t, i) => {
+                const on = t.id === decision.id;
+                const past = t.ts <= decisionTs;
+                return (
+                  <li key={t.id} className="flex items-start">
+                    <button
+                      onClick={() => setDecisionId(t.id)}
+                      aria-current={on ? "step" : undefined}
+                      className="group flex flex-col items-center gap-1.5 px-2 rounded-md focus-visible:outline-2 focus-visible:outline-ring"
+                    >
+                      <span
+                        className={cn(
+                          "size-3 rounded-full ring-2 transition-transform",
+                          on ? "bg-exante ring-exante/30 scale-125" : past ? "bg-exante/60 ring-transparent" : curtain ? "bg-card ring-border" : "bg-expost/70 ring-transparent",
+                        )}
+                      />
+                      <span className={cn("text-xs whitespace-nowrap num", on ? "text-exante font-medium" : "text-muted-foreground group-hover:text-foreground")}>
+                        {curtain && !past ? `决策点 ${i + 1}` : `${fmtDate(t.ts).slice(5)} ${pointLabel(t)}`}
+                      </span>
+                    </button>
+                    {i < points.length - 1 && <span aria-hidden className={cn("mt-[5px] h-0.5 w-10 sm:w-16 rounded-full", points[i + 1].ts <= decisionTs ? "bg-exante/50" : "bg-border")} />}
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+        )}
       </div>
 
       <div className="grid lg:grid-cols-[minmax(0,1fr)_360px] gap-5 items-start">
         <div className="space-y-4 min-w-0">
-          <div className="rounded-lg border border-border bg-card p-3">
+          <div className="panel p-3 sm:p-4">
             <KlineChart raw={set.series.raw} adj={set.series.adj} trades={chartTrades} events={chartEvents} decisionDate={fmtDate(decisionTs)} cutoffTs={curtain ? decisionTs : null} onEventClick={openById} />
-            <p className="px-2 pt-1 text-xs text-muted-foreground">
+            <p className="px-1 pt-2 text-xs leading-relaxed text-muted-foreground">
               {curtain ? "回到当时：K 线用不复权价格，只画决策时已经收盘的部分（盘中成交时当天那根也不画），纵轴也只按这部分数据定范围。" : "K 线为前复权。"}
               三角是成交，圆点是公告、财报、异动等事件（点击查看出处）。
               {set.episode.corpEvents.length > 0 && " 持仓期间有除权除息，不复权价格会跳空，收益按复权口径计算。"}
@@ -325,7 +364,7 @@ export default function DecisionView() {
           )}
         </div>
 
-        <aside className="lg:sticky lg:top-4">
+        <aside className="lg:sticky lg:top-20">
           <EvidenceList items={set.items} decisionTs={decisionTs} locked={curtain} onOpen={setOpen} sources={set.sources} />
         </aside>
       </div>

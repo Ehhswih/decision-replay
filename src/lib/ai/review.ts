@@ -111,7 +111,7 @@ function dataUncertainties(set: EvidenceSet, ep: Episode) {
 
 function ctxFor(pack: PackItem[], evidence: Map<string, Evidence>, log: LogEntry[], stage: string, exAnteAt?: number, alwaysSources: string[] = []): CheckContext {
   const texts = new Map(pack.map((p) => [p.id, packText(p)]));
-  return { evidence, exAnteAt, log, stage, alwaysSources, packTexts: [...texts.values()], textOf: (e) => texts.get(e.id) ?? `${e.title} ${e.detail ?? ""} ${e.value ?? ""}` };
+  return { evidence, exAnteAt, log, stage, alwaysSources, packTexts: [...texts.values()], packIds: pack.map((p) => p.id), textOf: (e) => texts.get(e.id) ?? `${e.title} ${e.detail ?? ""} ${e.value ?? ""}` };
 }
 
 type ExAnteOut = { summary?: string; supporting?: unknown; warnings?: unknown; reason_check?: { claim?: string; status?: string; text?: string; evidence_ids?: string[] }[]; negatives_check?: { evidence_id?: string; addressed_in_reason?: boolean; relevant?: boolean; note?: string }[] };

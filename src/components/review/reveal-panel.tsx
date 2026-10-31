@@ -3,7 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Tag } from "@/components/timing-badge";
 import { ClaimList, EvidenceChips, Section } from "./claims";
-import { ERROR_TYPE_TEXT, OUTCOME_TEXT, TRIGGER_TEXT, fmtDateTime } from "@/lib/labels";
+import { ERROR_TYPE_TEXT, OUTCOME_TEXT, TRIGGER_TEXT, fmtDateTime, quadrantText } from "@/lib/labels";
 import type { Evidence } from "@/lib/domain/evidence";
 import type { BiasResult } from "@/lib/domain/biases";
 import type { Attribution } from "@/lib/domain/attribution";
@@ -15,10 +15,10 @@ function Quadrant({ a }: { a: Attribution }) {
   const cell = (process: string, outcome: string, label: string) => {
     const on = (a.process === "good" ? "good" : a.process === "poor" ? "poor" : "mixed") === process && a.outcome === outcome;
     return (
-      <div className={`rounded px-2 py-2 text-center text-xs border ${on ? "border-foreground bg-foreground text-background font-medium" : "border-border text-muted-foreground"}`}>{label}</div>
+      <div className={`rounded-md px-2 py-2.5 text-center text-xs transition-colors ${on ? "bg-foreground text-background font-medium shadow-sm" : "bg-muted/60 text-muted-foreground"}`}>{label}</div>
     );
   };
-  if (a.outcome === "open") return <p className="text-sm">{a.quadrant}</p>;
+  if (a.outcome === "open") return <p className="text-sm">{quadrantText(a.quadrant)}</p>;
   return (
     <div className="grid grid-cols-[3.5rem_1fr_1fr] gap-1.5 items-center text-xs">
       <span />
@@ -69,16 +69,19 @@ export function RevealPanel({
         <div className="grid xl:grid-cols-[minmax(0,20rem)_1fr] gap-5 items-start">
           <Quadrant a={attribution} />
           <div className="text-sm space-y-2">
-            <p>
-              <span className="text-muted-foreground mr-2">问题归类</span>
-              <span className="font-semibold">{ERROR_TYPE_TEXT[attribution.errorType]}</span>
+            <p className="flex items-baseline gap-2">
+              <span className="text-xs text-muted-foreground">问题归类</span>
+              <span className="text-lg font-semibold tracking-tight">{ERROR_TYPE_TEXT[attribution.errorType]}</span>
             </p>
             <p className="leading-relaxed">
               {attribution.errorReason.text} <EvidenceChips ids={attribution.errorReason.evidenceIds} evidence={evidence} decisionTs={decisionTs} onOpen={onOpen} />
             </p>
-            <ul className="text-muted-foreground space-y-1 pt-1">
+            <ul className="text-muted-foreground space-y-1.5 pt-2 mt-2 border-t border-border">
               {attribution.processPoints.map((p, i) => (
-                <li key={i}>· {p.text}</li>
+                <li key={i} className="flex gap-2 leading-relaxed">
+                  <span aria-hidden className="mt-[0.6em] size-1 shrink-0 rounded-full bg-muted-foreground/60" />
+                  <span>{p.text}</span>
+                </li>
               ))}
             </ul>
           </div>
@@ -108,7 +111,7 @@ export function RevealPanel({
         {hits.length === 0 && <p className="text-sm text-muted-foreground mb-3">这次没有命中任何偏差规则。</p>}
         <ul className="space-y-4">
           {hits.map((b, i) => (
-            <li key={`${b.ruleId}-${i}`} className="text-sm">
+            <li key={`${b.ruleId}-${i}`} className="text-sm border-l-2 border-destructive/50 pl-3.5">
               <div className="flex flex-wrap items-center gap-1.5 mb-1">
                 <span className="font-medium">{b.name}</span>
                 <Tag tone="danger">命中</Tag>
@@ -173,7 +176,7 @@ export function RevealPanel({
                   {l.text} <EvidenceChips ids={l.evidenceIds} evidence={evidence} decisionTs={decisionTs} onOpen={onOpen} />
                   {l.source === "rule" && <span className="text-xs text-muted-foreground ml-1">（规则模板）</span>}
                 </div>
-                <Button size="sm" variant={addedLessons.has(l.id) ? "secondary" : "default"} disabled={addedLessons.has(l.id)} onClick={() => onAddLesson(l)} className="shrink-0">
+                <Button size="sm" variant={addedLessons.has(l.id) ? "secondary" : "default"} disabled={addedLessons.has(l.id)} onClick={() => onAddLesson(l)} className="shrink-0 rounded-full px-3">
                   {addedLessons.has(l.id) ? "已加入清单" : "加入我的清单"}
                 </Button>
               </li>
@@ -185,7 +188,7 @@ export function RevealPanel({
       </Section>
 
       {review && (
-        <details className="rounded-lg border border-border bg-card p-4 text-sm">
+        <details className="panel p-4 text-sm">
           <summary className="cursor-pointer">
             AI 输出校验：丢弃或修改了 {review.validationLog.length} 处
             <span className="text-muted-foreground ml-2 text-xs">

@@ -87,3 +87,8 @@ export const PORTFOLIO_LESSONS: Record<string, { text: string; trigger: string }
   B4: { text: "亏损持仓超过原定持有期时，强制复查一次买入逻辑是否还成立", trigger: "disposition" },
   B5: { text: "同一只股票 10 个交易日内准备第三次交易前，先复查前两次的结果和手续费", trigger: "overtrade" },
 };
+
+/** 页面上显示"过程一般，结果差"；领域里的原始写法用中点分隔 */
+export function quadrantText(q: string) {
+  return q.replace(/\s*·\s*/g, "，");
+}

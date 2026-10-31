@@ -49,7 +49,7 @@ export function DecisionNotes({ notes, onChange }: { notes: DecisionNote[]; onCh
   };
 
   return (
-    <section className="rounded-lg border border-border bg-card p-5">
+    <section className="panel p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
         <h2 className="text-[15px] font-semibold">我的决策记录</h2>
         <Button variant="ghost" size="sm" className="text-destructive" onClick={purge}>

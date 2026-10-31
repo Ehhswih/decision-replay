@@ -19,7 +19,8 @@ export interface Trade {
   planTarget: number | null;
 }
 
-export type Severity = "error" | "warning";
+/** info：不影响复盘的说明，例如跳过了转账、分红等非买卖记录 */
+export type Severity = "error" | "warning" | "info";
 
 export interface Issue {
   severity: Severity;

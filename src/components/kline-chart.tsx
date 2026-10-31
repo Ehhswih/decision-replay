@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useTheme } from "next-themes";
 import * as echarts from "echarts/core";
 import { CandlestickChart, ScatterChart } from "echarts/charts";
 import { GridComponent, TooltipComponent, MarkLineComponent, DataZoomComponent } from "echarts/components";
@@ -9,11 +10,24 @@ import type { Bar } from "@/lib/domain/types";
 
 echarts.use([CandlestickChart, ScatterChart, GridComponent, TooltipComponent, MarkLineComponent, DataZoomComponent, CanvasRenderer]);
 
-const UP = "#d9363e";
-const DOWN = "#16915a";
-const INK = "#1d2430";
-const MUTED = "#5f6878";
 const GRID = { left: 56, right: 16, top: 28, bottom: 52 };
+
+/** 颜色跟着页面主题走：从 CSS 变量里读 */
+function palette() {
+  const css = getComputedStyle(document.documentElement);
+  const v = (name: string) => css.getPropertyValue(name).trim();
+  return {
+    up: v("--up"),
+    down: v("--down"),
+    ink: v("--foreground"),
+    muted: v("--muted-foreground"),
+    card: v("--card"),
+    border: v("--border"),
+    grid: v("--grid-line"),
+    exante: v("--exante"),
+    uncertain: v("--uncertain"),
+  };
+}
 
 export interface ChartTrade {
   id: string;
@@ -54,6 +68,7 @@ export function KlineChart({
   const chart = useRef<echarts.ECharts | null>(null);
   const [cover, setCover] = useState<{ left: number; width: number } | null>(null);
   const then = cutoffTs != null;
+  const { resolvedTheme } = useTheme();
 
   useEffect(() => {
     if (!box.current) return;
@@ -69,11 +84,15 @@ export function KlineChart({
   useEffect(() => {
     const c = chart.current;
     if (!c || !adj.length) return;
-    // 当时视角用不复权价格：前复权会用到决策之后的除权信息
-    const bars = then ? raw : adj;
-    const dates = bars.map((b) => b.date);
+    const { up: UP, down: DOWN, ink: INK, muted: MUTED, card, border, grid, exante, uncertain } = palette();
     // 第 D 日的 K 线在 D 日 15:00 收盘后才完整；盘中决策时当天那根也不画
     const visible = (date: string) => !then || Date.parse(`${date}T15:00:00+08:00`) <= (cutoffTs as number);
+    // 当时视角用不复权价格：前复权会用到决策之后的除权信息。
+    // 横轴只留决策之后固定 10 个交易日给幕布：留多少不能跟着实际持有时长变，否则幕布宽度就透露了拿了多久
+    const FUTURE_SLOTS = 10;
+    const firstHidden = then ? raw.findIndex((b) => !visible(b.date)) : -1;
+    const bars = !then ? adj : firstHidden === -1 ? raw : raw.slice(0, firstHidden + FUTURE_SLOTS);
+    const dates = bars.map((b) => b.date);
     const shown = bars.filter((b) => visible(b.date));
     const rawClose = new Map(raw.map((b) => [b.date, b.close]));
     const factor = new Map(adj.map((b) => [b.date, rawClose.get(b.date) ? b.close / (rawClose.get(b.date) as number) : 1]));
@@ -104,8 +123,8 @@ export function KlineChart({
         tooltip: {
           trigger: "item",
           confine: true,
-          backgroundColor: "#ffffff",
-          borderColor: "#dcdfd8",
+          backgroundColor: card,
+          borderColor: border,
           textStyle: { color: INK, fontSize: 12 },
           extraCssText: "max-width:320px;white-space:normal;",
           formatter: (p: { seriesType: string; data: unknown; name: string }) => {
@@ -122,17 +141,17 @@ export function KlineChart({
           type: "category",
           data: dates,
           boundaryGap: true,
-          axisLine: { lineStyle: { color: "#cfd3cb" } },
+          axisLine: { lineStyle: { color: border } },
           axisLabel: { color: MUTED, fontSize: 11 },
         },
         yAxis: {
           scale: true,
           min: yMin,
           max: yMax,
-          splitLine: { lineStyle: { color: "#e9ebe6" } },
+          splitLine: { lineStyle: { color: grid } },
           axisLabel: { color: MUTED, fontSize: 11, showMaxLabel: false, showMinLabel: false, formatter: (v: number) => String(Math.round(v * 100) / 100) },
         },
-        dataZoom: [{ type: "inside" }, { type: "slider", height: 18, bottom: 8, showDataShadow: false, borderColor: "#dcdfd8", textStyle: { color: MUTED, fontSize: 10 } }],
+        dataZoom: [{ type: "inside" }, { type: "slider", height: 18, bottom: 8, showDataShadow: false, borderColor: border, fillerColor: "rgba(127,140,160,0.14)", handleStyle: { color: card, borderColor: MUTED }, moveHandleStyle: { color: border }, textStyle: { color: MUTED, fontSize: 10 } }],
         series: [
           {
             type: "candlestick",
@@ -142,8 +161,8 @@ export function KlineChart({
             markLine: {
               symbol: "none",
               silent: true,
-              label: { formatter: "决策时刻", color: "#3b4fb8", fontSize: 11 },
-              lineStyle: { color: "#3b4fb8", width: 1.5, type: "solid" },
+              label: { formatter: "决策时刻", color: exante, fontSize: 11 },
+              lineStyle: { color: exante, width: 1.5, type: "solid" },
               data: [{ xAxis: decisionDate }],
             },
           },
@@ -171,7 +190,7 @@ export function KlineChart({
             z: 4,
             data: eventPoints.map((p) => ({
               ...p,
-              itemStyle: { color: p.tone === "negative" ? DOWN : p.tone === "positive" ? UP : "#8a8f98", borderColor: "#fff", borderWidth: 1 },
+              itemStyle: { color: p.tone === "negative" ? DOWN : p.tone === "positive" ? UP : uncertain, borderColor: card, borderWidth: 2 },
             })),
           },
         ],
@@ -200,7 +219,7 @@ export function KlineChart({
     c.on("datazoom", place);
     c.off("finished");
     c.on("finished", place);
-  }, [raw, adj, trades, events, decisionDate, cutoffTs, then, onEventClick]);
+  }, [raw, adj, trades, events, decisionDate, cutoffTs, then, onEventClick, resolvedTheme]);
 
   return (
     <div className="relative">
@@ -210,7 +229,7 @@ export function KlineChart({
           className="absolute curtain border-l-2 border-exante flex items-center justify-center pointer-events-none"
           style={{ left: cover.left, width: cover.width, top: GRID.top, bottom: GRID.bottom }}
         >
-          <span className="text-xs text-muted-foreground bg-card/90 px-2 py-1 rounded border border-border">决策之后的行情和事件已遮住</span>
+          <span className="text-xs text-muted-foreground bg-card/90 px-2.5 py-1 rounded-full ring-1 ring-border">决策之后的行情和事件已遮住</span>
         </div>
       )}
     </div>

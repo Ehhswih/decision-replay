@@ -84,6 +84,15 @@ describe("单个持仓段的规则", () => {
     expect(find(episodeBiases(episode([stopBuy, s], -3), [calc("calc:vscost:s", -3), missing]), "B7").outcome).toBe("undetermined");
   });
 
+  it("B7：之前没跌破止损线、卖出当天跌破当天就卖，说明清楚，不算偏离", () => {
+    const b = trade("b", "buy", T0, { planStop: 5 });
+    const s = trade("s", "sell", T0 + 86_400_000 * 3);
+    const r = find(episodeBiases(episode([b, s], -9.4), [calc("calc:vscost:s", -9.4), calc("calc:stop:s", 5, "卖出前没有跌破计划止损 5% 的止损线")]), "B7");
+    expect(r.outcome).toBe("not_hit");
+    expect(r.finding).toContain("卖出当天才跌破止损线");
+    expect(r.finding).toContain("多亏 4.4 个百分点");
+  });
+
   it("B8 选择性关注：只看买入前 10 天内、当时可知的负面信息，事后的不算", () => {
     const b = trade("b", "buy", T0);
     const ep = episode([b, trade("s", "sell", T0 + 86_400_000 * 20)], -40);
@@ -162,6 +171,16 @@ describe("过程、结果和问题归类", () => {
     const a = attribute(ep, [notice], biases, { failedAssumption: { text: "理由说资金在抢筹，但买入前一天已有大股东减持计划", evidenceIds: ["trade:b", "notice:1"] } });
     expect(a.errorType).toBe("judgment");
     expect(a.errorReason.evidenceIds).toContain("notice:1");
+  });
+
+  it("AI 说证据不足以确认、或者买入时根本没写理由：不归为看错了", () => {
+    const notice: Evidence = { id: "notice:1", kind: "notice", title: "大股东减持计划", source: "iFinD", eventTime: T0 - 86_400_000, availableAt: T0 - 86_400_000, precision: "day", fetchedAt: null, status: "ok", tone: "negative" };
+    const biases = [bias("B1", "hit"), bias("B7", "undetermined")];
+    const withReason = episode([trade("b", "buy", T0, { reason: "资金在抢筹" }), trade("s", "sell", T0 + 86_400_000 * 10)], -6);
+    const hedge = { text: "资金抢筹的假设可能被减持削弱，但不足以确认假设已被推翻", evidenceIds: ["notice:1"] };
+    expect(attribute(withReason, [notice], biases, { failedAssumption: hedge }).errorType).toBe("undetermined");
+    const noReason = episode([trade("b", "buy", T0), trade("s", "sell", T0 + 86_400_000 * 10)], -6);
+    expect(attribute(noReason, [notice], biases, { failedAssumption: { text: "买入前已有减持计划", evidenceIds: ["notice:1"] } }).errorType).toBe("undetermined");
   });
 
   it("过程好、持仓期间有利空，但推翻假设的证据买入前就能看到：看错了，不算事后意外", () => {

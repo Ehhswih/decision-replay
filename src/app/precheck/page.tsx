@@ -13,6 +13,8 @@ import { TRIGGER_TEXT } from "@/lib/labels";
 import type { PrecheckResult } from "@/lib/precheck";
 import type { DecisionNote } from "@/lib/records";
 
+const BAR = { triggered: "border-destructive/60", clear: "border-down/50", manual: "border-border", unknown: "border-expost/60", na: "border-border" } as const;
+
 const STATUS = {
   triggered: { text: "触发", tone: "danger" },
   clear: { text: "未触发", tone: "ok" },
@@ -97,9 +99,9 @@ export default function PrecheckPage() {
 
   return (
     <div className="grid lg:grid-cols-[380px_minmax(0,1fr)] gap-6 items-start">
-      <form onSubmit={run} className="rounded-lg border border-border bg-card p-5 space-y-4 lg:sticky lg:top-4">
+      <form onSubmit={run} className="panel p-5 space-y-4 lg:sticky lg:top-20">
         <div>
-          <h1 className="text-xl font-semibold">决策前检查</h1>
+          <h1 className="text-[1.5rem] font-semibold tracking-tight">决策前检查</h1>
           <p className="text-sm text-muted-foreground mt-1">下单前，把自己的清单逐条套到这只股票现在的数据上。这里只告诉你哪条检查被触发、依据是什么，不判断能不能买卖。</p>
         </div>
         <div className="space-y-1.5">
@@ -108,7 +110,7 @@ export default function PrecheckPage() {
         </div>
         <div className="space-y-1.5">
           <span className="text-sm font-medium">打算</span>
-          <div className="grid grid-cols-2 gap-2" role="radiogroup">
+          <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-muted" role="radiogroup" aria-label="打算买入还是卖出">
             {(["buy", "sell"] as const).map((s) => (
               <button
                 type="button"
@@ -116,7 +118,7 @@ export default function PrecheckPage() {
                 role="radio"
                 aria-checked={side === s}
                 onClick={() => setSide(s)}
-                className={`rounded-md border px-3 py-1.5 text-sm ${side === s ? "border-foreground font-medium" : "border-border text-muted-foreground"}`}
+                className={`rounded-md px-3 py-1.5 text-sm transition-colors ${side === s ? "bg-card shadow-sm font-medium" : "text-muted-foreground hover:text-foreground"}`}
               >
                 {s === "buy" ? "买入" : "卖出"}
               </button>
@@ -137,7 +139,7 @@ export default function PrecheckPage() {
             <Input id="target" inputMode="decimal" value={target} onChange={(e) => setTarget(e.target.value.replace(/[^\d.]/g, ""))} placeholder="例如 15" />
           </div>
         </div>
-        <Button type="submit" className="w-full" disabled={busy || !query.trim()}>
+        <Button type="submit" className="w-full h-10 rounded-full" disabled={busy || !query.trim()}>
           {busy ? "正在取最新行情和公告……" : "开始检查"}
         </Button>
         {error && <p className="text-sm text-destructive">{error}</p>}
@@ -145,7 +147,7 @@ export default function PrecheckPage() {
 
       <div className="space-y-4 min-w-0">
         {!res && !busy && (
-          <div className="rounded-lg border border-dashed border-border bg-card p-8 text-sm text-muted-foreground">
+          <div className="rounded-xl border border-dashed border-border bg-card/60 p-8 text-sm leading-relaxed text-muted-foreground">
             填好左边再检查。会用到：最近 20 个交易日行情、热股排名、龙虎榜、近 10 天的异动、新闻和公告，以及
             <Link href="/checklist" className="text-exante underline underline-offset-2 mx-1">
               我的清单
@@ -156,21 +158,21 @@ export default function PrecheckPage() {
         {busy && <p className="text-sm text-muted-foreground">正在检查，通常需要 5–15 秒……</p>}
         {res && (
           <>
-            {res.adviceNotice && <div className="rounded-lg border border-exante/40 bg-exante/8 p-4 text-sm">{res.adviceNotice}</div>}
-            <section className="rounded-lg border border-border bg-card p-5">
+            {res.adviceNotice && <div className="rounded-xl bg-exante/8 ring-1 ring-inset ring-exante/25 p-4 text-sm">{res.adviceNotice}</div>}
+            <section className="panel p-5">
               <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
-                <h2 className="text-[15px] font-semibold">
-                  {res.name ?? res.code} <span className="text-muted-foreground font-normal num">{res.code}</span>
+                <h2 className="text-lg font-semibold tracking-tight">
+                  {res.name ?? res.code} <span className="text-sm text-muted-foreground font-normal num">{res.code}</span>
                 </h2>
                 <span className="text-xs text-muted-foreground">数据截至 {res.asOf ?? "未知"}，全部是现在已经公开的信息</span>
               </div>
               <p className="text-sm mb-4">
-                {res.checks.length} 条检查里有 <span className="font-semibold">{triggered.length}</span> 条被触发
+                {res.checks.length} 条检查里有 <span className="figure text-lg font-semibold">{triggered.length}</span> 条被触发
                 {!res.checks[0]?.fromChecklist && <span className="text-muted-foreground">（清单为空，用的是默认检查）</span>}。
               </p>
               <ul className="space-y-3">
                 {[...res.checks].sort((a, b) => (a.status === "triggered" ? -1 : 0) - (b.status === "triggered" ? -1 : 0)).map((c) => (
-                  <li key={c.id} className="text-sm">
+                  <li key={c.id} className={`text-sm border-l-2 pl-3.5 ${BAR[c.status]}`}>
                     <div className="flex flex-wrap items-center gap-1.5">
                       <Tag tone={STATUS[c.status].tone}>{STATUS[c.status].text}</Tag>
                       <Tag>{TRIGGER_TEXT[c.trigger]}</Tag>
@@ -195,7 +197,7 @@ export default function PrecheckPage() {
               </ul>
             </section>
 
-            <section className="rounded-lg border border-border bg-card p-5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+            <section className="panel p-5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
               <p className="text-sm text-muted-foreground">
                 {ran?.reason ? "把这次的理由、计划和上面的检查结果原样存下来，之后复盘时可以对照当时是怎么想的。" : "左边没有写理由。写下理由再检查一次，才能存为决策记录。"}
               </p>
@@ -205,8 +207,8 @@ export default function PrecheckPage() {
             </section>
 
             {res.related.length > 0 && (
-              <section className="rounded-lg border border-border bg-card p-5">
-                <h2 className="text-[15px] font-semibold mb-3">你以前复盘过的相关教训</h2>
+              <section className="panel p-5">
+                <h2 className="text-[15px] font-semibold tracking-tight mb-3">你以前复盘过的相关教训</h2>
                 <ul className="space-y-2 text-sm">
                   {res.related.map((r, i) => (
                     <li key={i}>
@@ -221,8 +223,8 @@ export default function PrecheckPage() {
               </section>
             )}
 
-            <section className="rounded-lg border border-border bg-card p-5">
-              <h2 className="text-[15px] font-semibold mb-3">现在能看到的事实</h2>
+            <section className="panel p-5">
+              <h2 className="text-[15px] font-semibold tracking-tight mb-3">现在能看到的事实</h2>
               {res.facts.length ? (
                 <ul className="space-y-1.5 text-sm">
                   {res.facts.map((f) => (

@@ -18,8 +18,12 @@ export function EvidenceChips({ ids, evidence, decisionTs, onOpen }: { ids: stri
             type="button"
             onClick={() => onOpen(e)}
             title={e.title}
-            className={`text-[11px] leading-4 px-1.5 py-px rounded border hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${
-              t === "ex_ante" ? "border-exante/40 text-exante" : t === "ex_post" ? "border-expost/40 text-expost" : "border-dashed border-uncertain/60 text-uncertain"
+            className={`num text-[11px] leading-4 px-1.5 py-px rounded-md transition-colors focus-visible:outline-2 focus-visible:outline-ring ${
+              t === "ex_ante"
+                ? "text-exante bg-exante/8 hover:bg-exante/16"
+                : t === "ex_post"
+                  ? "text-expost bg-expost/10 hover:bg-expost/18"
+                  : "text-uncertain outline-1 outline-dashed outline-uncertain/60 -outline-offset-1 hover:bg-muted"
             }`}
           >
             {KIND_LABEL[e.kind] ?? e.kind}
@@ -69,9 +73,9 @@ export function ClaimList({
 
 export function Section({ title, aside, children, className }: { title: string; aside?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
-    <section className={`rounded-lg border border-border bg-card p-4 sm:p-5 ${className ?? ""}`}>
-      <div className="flex items-baseline justify-between gap-3 mb-3">
-        <h2 className="text-[15px] font-semibold">{title}</h2>
+    <section className={`panel p-4 sm:p-5 ${className ?? ""}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 mb-3.5">
+        <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
         {aside}
       </div>
       {children}

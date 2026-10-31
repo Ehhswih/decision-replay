@@ -256,6 +256,22 @@ await check("隐私：一键删除导入的数据并回到示例组合", async (
   return `删除 ${d.json.purged} 笔`;
 });
 
+await check("导入：接近真实的同花顺交割单（转账、分红、申购、逆回购、ETF、分笔成交）", async () => {
+  const bytes = await fetch(BASE + "/sample-delivery-ths.csv").then((r) => r.arrayBuffer());
+  const form = new FormData();
+  form.append("file", new Blob([bytes], { type: "text/csv" }), "交割单.csv");
+  const r = await req("/api/import", { method: "POST", body: form });
+  const issues = r.json.issues ?? [];
+  const errors = issues.filter((i) => i.severity === "error");
+  const skipped = issues.filter((i) => i.code === "skipped").map((i) => i.message).join("；");
+  const merged = issues.filter((i) => i.code === "fills_merged").length;
+  assert(r.json.ok && r.json.encoding === "gbk" && errors.length === 0, `应无错误：${JSON.stringify(errors.slice(0, 3))}`);
+  assert(/逆回购/.test(skipped) && /ETF/.test(skipped) && /银行转证券/.test(skipped) && merged > 0, "应跳过逆回购、ETF、银证转账并合并分笔成交");
+  const d = await req("/api/workspace?purge=1", { method: "DELETE" });
+  assert(d.json.purged === r.json.imported, "导入的数据应能一键删除");
+  return `导入 ${r.json.imported} 笔，合并 ${merged} 组分笔成交，跳过 ${issues.filter((i) => i.code === "skipped").length} 类非买卖记录`;
+});
+
 await check("数据状态：配置齐全、iFinD 额度未用完", async () => {
   const r = await req("/api/status");
   const c = r.json.config;

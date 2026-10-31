@@ -62,7 +62,7 @@ ${JSON.stringify(params.pack)}
   "narrative": "这次决策从买入到卖出的复盘叙述，区分当时可知和事后才知，不超过 200 字",
   "facts": [{"text": "事实归因：结果是由什么造成的", "evidence_ids": ["..."], "type": "fact|inference|uncertain", "confidence": "high|mid|low"}],
   "bias_notes": [{"rule_id": "B1", "explanation": "结合证据解释这条规则为什么命中", "alternative": "另一种可能的解释"}],
-  "failed_assumption": {"text": "如果亏损：写出理由里哪条假设没有成立，并引用和它相反的新闻、公告、异动或财报证据 id（价格涨跌和成交记录不算相反证据）；找不到这样的证据、或盈利时填空字符串，不要猜", "evidence_ids": []},
+  "failed_assumption": {"text": "如果亏损：写出理由里哪条假设没有成立，并引用和它相反的新闻、公告、异动或财报证据 id（价格涨跌和成交记录不算相反证据）；找不到这样的证据、证据不足以确认假设被推翻、买入时没有记录理由、或盈利时填空字符串，不要猜", "evidence_ids": []},
   "uncertainties": [{"text": "影响这次复盘结论的不确定因素", "evidence_ids": ["..."], "type": "uncertain", "confidence": "low"}],
   "lessons": [{"text": "下次可以执行的检查动作", "trigger": "chase|hot|panic|anchor|plan|overtrade|disposition|attention|other", "evidence_ids": ["..."]}]
 }

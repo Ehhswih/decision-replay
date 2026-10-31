@@ -40,9 +40,9 @@ export function EvidenceList({
   const failing = sources.filter((s) => s.status !== "ok" || s.note);
 
   return (
-    <div className="rounded-lg border border-border bg-card flex flex-col max-h-[calc(100vh-6rem)]">
+    <div className="panel flex flex-col max-h-[calc(100vh-7rem)] overflow-hidden">
       <div className="p-3 border-b border-border space-y-3">
-        <div className="grid grid-cols-3 gap-1 text-[13px]" role="tablist" aria-label="按时点筛选证据">
+        <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-muted text-[13px]" role="tablist" aria-label="按时点筛选证据">
           {(Object.keys(TIMING_TEXT) as TimingKey[]).map((k) => (
             <button
               key={k}
@@ -50,20 +50,22 @@ export function EvidenceList({
               aria-selected={tab === k}
               onClick={() => setTab(k)}
               className={cn(
-                "rounded-md px-2 py-1.5 border transition-colors focus-visible:outline-2 focus-visible:outline-ring",
-                tab === k ? (k === "ex_ante" ? "border-exante bg-exante/8 text-exante" : k === "ex_post" ? "border-expost bg-expost/10 text-expost" : "border-uncertain border-dashed") : "border-transparent hover:bg-muted text-muted-foreground",
+                "rounded-md px-2 py-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+                tab === k
+                  ? cn("bg-card shadow-sm font-medium", k === "ex_ante" ? "text-exante" : k === "ex_post" ? "text-expost" : "text-foreground")
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
-              {TIMING_TEXT[k]} <span className="num">{grouped[k].length}</span>
+              {TIMING_TEXT[k]} {!(k === "ex_post" && locked) && <span className="num text-xs opacity-80">{grouped[k].length}</span>}
             </button>
           ))}
         </div>
         <div className="flex flex-wrap gap-1">
-          <button onClick={() => setKind(null)} className={cn("text-[11px] px-1.5 py-0.5 rounded border", !kind ? "border-foreground" : "border-border text-muted-foreground")}>
+          <button onClick={() => setKind(null)} className={cn("text-[11px] px-2 py-0.5 rounded-full ring-1 ring-inset transition-colors", !kind ? "bg-primary text-primary-foreground ring-primary" : "ring-border text-muted-foreground hover:text-foreground")}>
             全部
           </button>
           {KINDS.filter((k) => grouped[tab].some((e) => e.kind === k)).map((k) => (
-            <button key={k} onClick={() => setKind(kind === k ? null : k)} className={cn("text-[11px] px-1.5 py-0.5 rounded border", kind === k ? "border-foreground" : "border-border text-muted-foreground")}>
+            <button key={k} onClick={() => setKind(kind === k ? null : k)} className={cn("text-[11px] px-2 py-0.5 rounded-full ring-1 ring-inset transition-colors", kind === k ? "bg-primary text-primary-foreground ring-primary" : "ring-border text-muted-foreground hover:text-foreground")}>
               {KIND_LABEL[k]}
             </button>
           ))}
@@ -79,7 +81,7 @@ export function EvidenceList({
       <div className="relative flex-1 overflow-y-auto">
         {tab === "ex_post" && locked ? (
           <div className="curtain h-full min-h-48 flex items-center justify-center p-6 text-center text-sm text-muted-foreground">
-            这里有 {grouped.ex_post.length} 条决策之后才出现的信息。
+            这里是决策之后才出现的信息，条数也先不显示。
             <br />
             点上方「揭晓结果」再看。
           </div>
@@ -87,13 +89,13 @@ export function EvidenceList({
           <ul className="divide-y divide-border">
             {visible.slice(0, 200).map((e) => (
               <li key={e.id}>
-                <button type="button" onClick={() => onOpen(e)} className="w-full text-left px-3 py-2.5 hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring">
+                <button type="button" onClick={() => onOpen(e)} className="w-full text-left px-3.5 py-2.5 hover:bg-muted/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring">
                   <div className="flex items-center gap-1.5 mb-1 text-[11px] text-muted-foreground">
                     <span className="num">{e.availableAt ? fmtDate(e.availableAt) : "时间未知"}</span>
                     <Tag>{KIND_LABEL[e.kind] ?? e.kind}</Tag>
                     {e.status !== "ok" && <Tag tone="warn">{STATUS_TEXT[e.status]}</Tag>}
                     {e.thirdPartyAi && <Tag tone="warn">AI 摘要</Tag>}
-                    {e.tone === "negative" && <span className="text-down">负面</span>}
+                    {e.tone === "negative" && <span className="text-down ml-auto">负面</span>}
                   </div>
                   <div className="text-[13px] leading-snug line-clamp-2">{e.title}</div>
                 </button>

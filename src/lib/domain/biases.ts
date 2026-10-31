@@ -225,7 +225,11 @@ export function episodeBiases(ep: Episode, items: Evidence[], attentionGaps: str
       } else if (lagEv) {
         notes.push(lagEv.title);
         if (pct != null && -pct - stop > 3) notes.push(`卖出价比止损线多亏 ${(-pct - stop).toFixed(1)} 个百分点，来自跌破当天之后的跳空或连续下跌，不算没执行`);
-      } else if (stopEv) notes.push(stopEv.title);
+      } else if (stopEv) {
+        notes.push(stopEv.title);
+        // 之前的收盘都在止损线上方，卖出价却在线下：是当天跌破、当天卖出
+        if (pct != null && pct < -stop) notes.push(`卖出当天才跌破止损线、当天就卖了，卖出价比止损线多亏 ${(-pct - stop).toFixed(1)} 个百分点（盘中急跌或跳空），不算拖延`);
+      }
     } else if (stop != null && pct != null && pct < 0 && -pct - stop > 3) {
       // 缺少持仓期间的行情时，只能用最后的卖出价兜底
       violations.push(`计划止损 ${stop}%，实际卖出时相对成本 ${pct.toFixed(1)}%，多亏了 ${(-pct - stop).toFixed(1)} 个百分点`);

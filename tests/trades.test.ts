@@ -110,3 +110,87 @@ describe("持仓段", () => {
     expect(issues[0].code).toBe("sell_without_position");
   });
 });
+
+import { cleanCode, nonStockKind } from "@/lib/domain/trades";
+import { parseShDateTime } from "@/lib/time";
+
+// tests/fixtures 下的两份交割单由 scripts/make-realistic-trades.mjs 用真实行情生成：
+// 同一批成交分别按同花顺、东方财富的导出格式写出，夹着转账、分红、申购、逆回购、ETF、分笔成交
+describe("接近真实的交割单", () => {
+  const load = (f: string) => parseTradesCsv(decodeCsv(new Uint8Array(readFileSync(`tests/fixtures/${f}`))).text);
+  const ths = load("realistic-ths.csv");
+  const em = load("realistic-eastmoney.csv");
+
+  it("非买卖记录和非股票品种跳过并说明原因，不算错误", () => {
+    for (const r of [ths, em]) {
+      expect(r.issues.filter((i) => i.severity === "error")).toEqual([]);
+      const skipped = r.issues.filter((i) => i.code === "skipped").map((i) => i.message).join("\n");
+      for (const k of ["银行转证券", "新股申购", "申购配号", "ETF 或基金", "证券转银行"]) expect(skipped).toContain(k);
+      expect(r.trades.every((t) => /^(60|68|00|30)\d{4}\.(SH|SZ)$/.test(t.code))).toBe(true);
+    }
+    // 同花顺把逆回购记成“卖出 204001”，不能当成深市股票的卖出
+    expect(ths.issues.find((i) => i.code === "skipped" && i.message.includes("逆回购"))).toBeTruthy();
+  });
+
+  it("同一委托的分笔成交合并成一笔，两种格式解析出同样的成交", () => {
+    expect(ths.issues.some((i) => i.code === "fills_merged")).toBe(true);
+    const key = (t: (typeof ths.trades)[number]) => `${t.ts}|${t.code}|${t.side}|${t.qty}|${t.price.toFixed(2)}`;
+    expect(em.trades.map(key)).toEqual(ths.trades.map(key));
+    // 同一笔委托只留一行
+    const orders = new Set(ths.trades.map((t) => `${t.ts}|${t.code}|${t.side}`));
+    expect(orders.size).toBe(ths.trades.length);
+  });
+
+  it("东方财富：标题行、=\"代码\"、丢了前导 0 的时间、负数卖出数量都能识别", () => {
+    expect(em.trades.length).toBeGreaterThan(40);
+    expect(em.trades.every((t) => t.qty > 0 && t.timeKnown)).toBe(true);
+  });
+
+  it("备注里写的止损读成计划止损", () => {
+    const withStop = ths.trades.filter((t) => t.planStop != null);
+    expect(withStop.length).toBeGreaterThan(0);
+    expect(withStop.every((t) => /止损\d+%/.test(t.reason ?? ""))).toBe(true);
+    expect(ths.issues.some((i) => i.code === "plan_from_note")).toBe(true);
+  });
+});
+
+describe("交割单里的各种写法", () => {
+  it("代码：=\"002594\"、'002594、2594、600519.0", () => {
+    expect(cleanCode('="002594"')).toBe("002594");
+    expect(cleanCode("'002594")).toBe("002594");
+    expect(cleanCode("2594")).toBe("002594");
+    expect(cleanCode("600519.0")).toBe("600519");
+  });
+
+  it("逆回购、ETF、可转债、B 股、申购代码都不是股票", () => {
+    expect(nonStockKind("204001", "GC001")).toBe("逆回购");
+    expect(nonStockKind("131810")).toBe("逆回购");
+    expect(nonStockKind("510300")).toBe("ETF 或基金");
+    expect(nonStockKind("159915")).toBe("ETF 或基金");
+    expect(nonStockKind("113050", "南银转债")).toBe("债券或可转债");
+    expect(nonStockKind("128136")).toBe("债券或可转债");
+    expect(nonStockKind("900901")).toBe("B 股");
+    expect(nonStockKind("787518")).toBe("新股申购");
+    for (const c of ["600519", "688981", "000333", "300750", "002594", "830799", "920001"]) expect(nonStockKind(c)).toBeNull();
+  });
+
+  it("时间：93122 是 09:31:22", () => {
+    expect(parseShDateTime("20260430 94150")).toEqual(parseShDateTime("2026-04-30 09:41"));
+    expect(parseShDateTime("20260430 103122")).toEqual(parseShDateTime("2026-04-30 10:31"));
+  });
+
+  it("没有合同编号时，同一分钟同一只同方向的成交也合并；费用相加、价格按量加权", () => {
+    const { trades, issues } = parseTradesCsv(
+      "成交时间,证券代码,买卖方向,成交价格,成交数量,手续费\n2026-06-22 14:41,603986,买入,686.0,400,7\n2026-06-22 14:41,603986,买入,687.5,200,5\n2026-06-22 14:52,603986,买入,690,100,5\n",
+    );
+    expect(trades).toHaveLength(2);
+    expect(trades[0]).toMatchObject({ qty: 600, fee: 12, price: 686.5 });
+    expect(issues.find((i) => i.code === "fills_merged")?.message).toContain("第 2、3 行");
+  });
+
+  it("成交数量为 0 的行（撤单、申购占位）跳过", () => {
+    const { trades, issues } = parseTradesCsv("成交时间,证券代码,买卖方向,成交价格,成交数量\n2026-06-22 14:41,603986,买入,686,0\n2026-06-23 10:00,603986,买入,690,100\n");
+    expect(trades).toHaveLength(1);
+    expect(issues.some((i) => i.code === "skipped")).toBe(true);
+  });
+});

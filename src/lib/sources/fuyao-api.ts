@@ -75,7 +75,8 @@ export async function corpActions(code: string) {
     { thscode: code },
     12 * HOUR,
   );
-  // 没有除权记录是正常情况，不算 empty
+  // 没有除权记录是正常情况，不算 empty；扶摇对这种股票直接返回错误“No adjustment events”，也按没有记录处理
+  if (r.status === "failed" && /No adjustment events/i.test(r.error?.message ?? "")) return { ...r, status: "ok" as const, data: [] as CorpAction[], error: undefined };
   return mapResult<typeof r extends SourceResult<infer A> ? A : never, CorpAction[]>(
     r,
     (d) => (d.item ?? []).map((x) => ({ exDate: shDate(x.ex_date_ms), cashPerShare: x.dividend_per_share, bonusPerShare: x.per_share_bonus })),
