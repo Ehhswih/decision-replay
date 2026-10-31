@@ -1,0 +1,44 @@
+# 数据接口实测记录
+
+> 实测时间：北京时间 2026-10-31（周六）上午。脚本：`探测/probe.mjs`，原始响应在 `探测/raw/`。
+> 以后搬进仓库的 `docs/data-probe.md`，README 的"数据来源"和"已知边界"两节从这里取材。
+
+## 扶摇（全部 HTTP 200，code=0，单次 0.3–0.8 秒）
+
+| 接口 | 实测结果 | 对产品的影响 |
+|---|---|---|
+| 标的检索 `q=贵州茅台` | 1 条，第一次调用 2.2 秒（冷启动），之后正常 | 名称转代码可用 |
+| 个股日 K（none / forward） | 600519.SH 近 120 天 79 根，字段：`date_ms, open_price, high_price, low_price, close_price, volume, turnover` | 这段时间没有除权，两种口径首日收盘一样。产品里要用 `none` 价格核对成交价 |
+| 指数日 K | 000300.SH、000001.SH、399006.SZ 都能取到，最新到 2026-10-30 | 收益拆解里的"市场"部分可用 |
+| 交易日历（默认） | 20251031 ~ 20261030，242 个交易日 | 正常 |
+| 季度利润表 | 4 期都有 `report_date_ms`：Q3 披露日 10-31、Q2 08-15、Q1 04-25、2025 年报 04-17 | 能做时点切分。`report_date_ms` 和 `period_end_ms` 都是**北京时间 0 点**的毫秒戳 |
+| 行业归属 | 600519.SH → `881273.TI 白酒`（type=industry） | 能拿到行业指数代码，但只有当前归属 |
+| 个股新闻 | 每页 100 条，翻 10 页共 1000 条，最早到 **2026-05-19**（茅台新闻多，冷门股能翻得更早）。`type=1` 是新闻，`type=2` 是研报。来源有财闻、同花顺 iNews、北京商报、证券时报等 | 示例交易放在近 5 个月内比较稳；按需翻页，结果缓存 |
+| 日期范围异动解读 | 365 天内 17 条，`was_truncated=false`。四个时间字段**实测是毫秒戳**（文档写的是"待核实"），`first_publish_time` 比 `create_time` 晚约 40 秒。`analysis_content` 是同花顺 **AI 生成的摘要**，末尾带免责声明 | 可知时间用 `first_publish_time`；界面上标"第三方 AI 摘要" |
+| 热股排名走势 | 每天一条 `{date, rank, date_ms}` | 追热点判定可用 |
+| 龙虎榜（默认最近交易日） | trade_date=2026-10-30，93 条记录 / 84 只股票。列表字段是 `stock_items` 和 `hot_money_items`，**不是** `item` | 我第一次解析时读错字段，误报成 0 条，看原始响应后修正（已记进 AI 验证记录） |
+
+## iFinD MCP（综合服务 `hexin-ifind-ds-mcp`）
+
+- 端点：`api-mcp.51ifind.com:8643`，streamable HTTP，`Authorization` 头鉴权。initialize 和 tools/list 都正常。
+- 综合服务有 10 个工具：`get_stock_summary, fetch_edb, search_edb, search_notice, search_news, search_trending_news, security_highfreq_quotes, get_security_indicators, search_securities, market_statistics`。配置里另外还有 A 股专用服务 `hexin-ifind-ds-stock-mcp`、快查和法智。
+- `search_news` / `search_notice` 的参数：`query`（自然语言）、`time_start`、`time_end`（yyyy-MM-dd）、`size`（默认 5，上限 20）。
+- 返回格式：成功时 `code=1`（**扶摇是 code=0，两边约定不一样**），`data` 里是一段 JSON 字符串，键名是中文（`资讯标题 / 资讯内容 / 日期 / URL`，公告是 `公告标题 / 公告片段内容 / 日期`）。
+- **时间范围不是硬过滤**：查询窗口是 2026-04-20 到 04-30，返回结果里有一篇日期是 2026-10-31 的盈利预测（内容里有 2026 年中报数据），还有一篇讲 2024 年一季报的。**这正是后见之明泄漏的来源**，产品里必须按日期再过滤一遍。
+- **日期只精确到天**，没有具体时刻。和决策同一天的条目一律标"时序不确定"。
+- 公告片段有时是 AI 生成的解读（开头是"根据提供的材料……"），不是公告原文，要标出来。
+- 交叉验证：iFinD 公告日期 2026-04-25 和扶摇 Q1 财报的披露日 04-25 一致。
+- **口径冲突的实例**：茅台 2026 Q1 营收，扶摇 `operating_income` 和 iFinD 公告解读都是 539.09 亿（营业收入），iFinD 公告里的表格写的是营业总收入 547.03 亿。同一个季度出现两个数，差别在"营业收入"和"营业总收入"的口径。产品里每个数都要标口径。
+- 额度：到目前为止用了约 2 次实际工具调用（initialize 和 tools/list 是否扣次待查，可以在 iFinD 个人中心的"用量"里看）。
+
+## DeepSeek
+
+- `/models` 里只有两个模型：`deepseek-flash`、`deepseek-v4-pro`。
+- 两个都是推理模型，会先输出思考 token：
+  - `deepseek-flash`：结构化抽取 1.4 秒，JSON 模式正确，抽出了止损 8%、目标 20%；
+  - `deepseek-v4-pro`：`max_tokens=300` 时 300 个 token **全被思考用掉，正文为空**。
+- **决定：只用 `deepseek-flash`**（用户判断：目前 flash 和 v4-pro 能力差不多，flash 更快）。flash 也会先输出思考 token，`max_tokens` 要留够；复盘生成仍然做成后台任务加进度提示，演示组合的复盘提前生成并缓存。
+
+## 环境
+
+- **这台电脑的系统时区是 UTC-4**，北京时间比本机快 12 小时。代码里所有时间都要显式按 `Asia/Shanghai` 处理，不能依赖本机或服务器的时区。测试里加一条：在 `TZ=America/New_York` 下跑一遍时点切分的单测。

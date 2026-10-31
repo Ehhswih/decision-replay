@@ -1,0 +1,87 @@
+import "server-only";
+import { DatabaseSync } from "node:sqlite";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS cache (
+  key        TEXT PRIMARY KEY,
+  source     TEXT NOT NULL,
+  endpoint   TEXT NOT NULL,
+  params     TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  fetched_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS call_log (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  source     TEXT NOT NULL,
+  endpoint   TEXT NOT NULL,
+  params     TEXT NOT NULL,
+  status     TEXT NOT NULL,
+  code       TEXT,
+  message    TEXT,
+  latency_ms INTEGER,
+  from_cache INTEGER NOT NULL DEFAULT 0,
+  at         INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS trades (
+  id          TEXT PRIMARY KEY,
+  workspace   TEXT NOT NULL,
+  row_no      INTEGER NOT NULL,
+  ts          INTEGER NOT NULL,
+  time_known  INTEGER NOT NULL,
+  code        TEXT NOT NULL,
+  name        TEXT,
+  side        TEXT NOT NULL,
+  price       REAL NOT NULL,
+  qty         REAL NOT NULL,
+  fee         REAL NOT NULL DEFAULT 0,
+  reason      TEXT,
+  plan_stop   REAL,
+  plan_target REAL
+);
+CREATE INDEX IF NOT EXISTS trades_ws ON trades(workspace, code, ts);
+
+CREATE TABLE IF NOT EXISTS evidence_sets (
+  episode_id TEXT PRIMARY KEY,
+  workspace  TEXT NOT NULL,
+  json       TEXT NOT NULL,
+  built_at   INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reviews (
+  episode_id TEXT PRIMARY KEY,
+  workspace  TEXT NOT NULL,
+  status     TEXT NOT NULL,
+  json       TEXT,
+  error      TEXT,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS checklist (
+  id                TEXT PRIMARY KEY,
+  workspace         TEXT NOT NULL,
+  text              TEXT NOT NULL,
+  source_episode_id TEXT,
+  source_lesson_id  TEXT,
+  rule              TEXT,
+  enabled           INTEGER NOT NULL DEFAULT 1,
+  created_at        INTEGER NOT NULL
+);
+`;
+
+const globalForDb = globalThis as unknown as { __db?: DatabaseSync };
+
+export function db(): DatabaseSync {
+  if (!globalForDb.__db) {
+    const dir = process.env.DATA_DIR ?? join(process.cwd(), "data");
+    mkdirSync(dir, { recursive: true });
+    const conn = new DatabaseSync(join(dir, "app.db"));
+    conn.exec("PRAGMA journal_mode = WAL;");
+    conn.exec(SCHEMA);
+    globalForDb.__db = conn;
+  }
+  return globalForDb.__db;
+}
