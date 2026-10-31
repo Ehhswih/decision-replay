@@ -43,5 +43,13 @@ next-env.d.ts
 # local data
 /data
 
+# 演示视频录制的中间文件
+/scripts/demo-video/frames
+/scripts/demo-video/dry
+/scripts/demo-video/audio
+/scripts/demo-video/*.mp4
+/scripts/demo-video/*.m4a
+/scripts/demo-video/*timeline.json
+
 # env example is committed
 !.env.example

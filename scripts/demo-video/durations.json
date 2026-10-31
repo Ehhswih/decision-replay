@@ -1,0 +1,57 @@
+{
+  "s01-home": {
+    "duration": 10.88,
+    "chars": 60,
+    "warning": ""
+  },
+  "s02-demo": {
+    "duration": 9.52,
+    "chars": 52,
+    "warning": ""
+  },
+  "s03-list": {
+    "duration": 12,
+    "chars": 52,
+    "warning": ""
+  },
+  "s04-then": {
+    "duration": 21.28,
+    "chars": 94,
+    "warning": ""
+  },
+  "s05-sell": {
+    "duration": 12.48,
+    "chars": 69,
+    "warning": ""
+  },
+  "s06-judge": {
+    "duration": 10.16,
+    "chars": 50,
+    "warning": ""
+  },
+  "s07-reveal": {
+    "duration": 15.36,
+    "chars": 68,
+    "warning": ""
+  },
+  "s08-evidence": {
+    "duration": 7.44,
+    "chars": 36,
+    "warning": ""
+  },
+  "s09-lesson": {
+    "duration": 2.24,
+    "chars": 14,
+    "warning": ""
+  },
+  "s10-precheck": {
+    "duration": 13.44,
+    "chars": 66,
+    "warning": ""
+  },
+  "s11-end": {
+    "duration": 6.24,
+    "chars": 31,
+    "warning": ""
+  }
+}
