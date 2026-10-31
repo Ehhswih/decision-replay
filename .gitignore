@@ -43,13 +43,8 @@ next-env.d.ts
 # local data
 /data
 
-# 演示视频录制的中间文件
-/scripts/demo-video/frames
-/scripts/demo-video/dry
-/scripts/demo-video/audio
-/scripts/demo-video/*.mp4
-/scripts/demo-video/*.m4a
-/scripts/demo-video/*timeline.json
+# next dev 自动生成的给编程助手看的说明
+/AGENTS.md
 
 # env example is committed
 !.env.example
