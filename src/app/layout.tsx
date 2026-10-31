@@ -1,24 +1,19 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { Geist } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SiteHeader } from "@/components/site-header";
 import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "决策回放",
   description: "复盘历史投资决策：分清当时可知和事后才知，沉淀成下一次决策的检查清单",
 };
 
+// 只用系统字体：构建时不需要访问 Google Fonts（国内服务器连不上）
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="zh-CN" className={`${geistSans.variable} h-full antialiased`}>
+    <html lang="zh-CN" className="h-full antialiased">
       <body className="min-h-full flex flex-col">
         <TooltipProvider>
           <Suspense fallback={<div className="h-14 border-b border-border bg-card" />}>

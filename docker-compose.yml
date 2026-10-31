@@ -1,8 +1,13 @@
 # 生产部署：应用 + Caddy 反向代理。
-# SITE_ADDRESS 写在 .env 里：填域名（例如 1-2-3-4.sslip.io）时 Caddy 自动申请 HTTPS 证书；填 :80 时只用 HTTP。
+# SITE_ADDRESS 写在 .env 里：填域名时 Caddy 自动申请 HTTPS 证书；填 :80 时只用 HTTP（国内服务器没有备案域名时用这个，按 IP 访问）。
+# Caddy 还负责带上 X-Forwarded-For，限流按访客 IP 计算。
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+    image: decision-replay:latest
     restart: unless-stopped
     env_file: .env
     volumes:

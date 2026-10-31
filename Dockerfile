@@ -1,8 +1,10 @@
 # 多阶段构建：依赖 → 构建 → 运行（standalone 输出，镜像里不带源码和开发依赖）
 FROM node:24-slim AS deps
 WORKDIR /app
+# 国内服务器上 npm 官方源很慢，部署时传 NPM_REGISTRY=https://registry.npmmirror.com
+ARG NPM_REGISTRY=https://registry.npmjs.org
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm ci --no-audit --no-fund --registry=$NPM_REGISTRY
 
 FROM node:24-slim AS build
 WORKDIR /app
