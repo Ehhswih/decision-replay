@@ -44,7 +44,7 @@ export function ExAntePanel({
   return (
     <div className="space-y-4">
       <Section title={`${fmtDateTime(trade.ts)} ${isSell ? "卖出时" : "下单时"}`} aside={<span className="text-xs text-muted-foreground num">{isSell ? "卖出" : "买入"} {trade.qty} 股 @ {trade.price}</span>}>
-        <dl className="grid sm:grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5 text-sm">
+        <dl className="grid sm:grid-cols-[6rem_1fr] gap-x-3 gap-y-1.5 text-sm">
           <dt className="text-muted-foreground">当时理由</dt>
           <dd>{trade.reason ?? <span className="text-muted-foreground">没有记录</span>}</dd>
           <dt className="text-muted-foreground">{isSell ? "卖出前的计划" : "计划"}</dt>
