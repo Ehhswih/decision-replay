@@ -1,0 +1,35 @@
+# 生产部署：应用 + Caddy 反向代理。
+# SITE_ADDRESS 写在 .env 里：填域名（例如 1-2-3-4.sslip.io）时 Caddy 自动申请 HTTPS 证书；填 :80 时只用 HTTP。
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - appdata:/app/data
+    expose:
+      - "3000"
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - app
+
+volumes:
+  appdata:
+  caddydata:
+  caddyconfig:

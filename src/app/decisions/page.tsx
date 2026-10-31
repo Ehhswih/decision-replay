@@ -26,7 +26,7 @@ export default function DecisionsPage() {
   }, []);
 
   if (error) return <p className="text-destructive">{error}</p>;
-  if (!data) return <p className="text-muted-foreground">正在按持仓段整理成交，并计算规则结果……第一次打开需要拉取行情，大约 30 秒。</p>;
+  if (!data) return <p className="text-muted-foreground">正在按持仓段整理成交、拉取行情和资讯并计算规则结果……第一次打开一个组合大约需要 1 分钟，之后读缓存。</p>;
 
   const portfolioHits = data.portfolio.filter((p) => p.outcome === "hit");
   const errors = data.issues.filter((i) => i.severity === "error");

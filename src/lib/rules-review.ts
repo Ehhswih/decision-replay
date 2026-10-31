@@ -21,8 +21,14 @@ export interface PortfolioRules {
 /** 规则版复盘：整个组合一起算，因为处置效应和过度交易要跨持仓段看 */
 export async function rulesForWorkspace(workspace: string): Promise<PortfolioRules> {
   const a = await analyzeWorkspace(workspace);
+  // 每个持仓段要调十几次数据源（热门股新闻还要翻很多页），3 个一组并行，兼顾速度和数据源限流
   const sets = new Map<string, EvidenceSet>();
-  for (const ep of a.episodes) sets.set(ep.id, await buildEvidenceSet(workspace, ep));
+  const queue = [...a.episodes];
+  await Promise.all(
+    Array.from({ length: Math.min(3, queue.length) }, async () => {
+      for (let ep = queue.shift(); ep; ep = queue.shift()) sets.set(ep.id, await buildEvidenceSet(workspace, ep));
+    }),
+  );
 
   const perEpisode = a.episodes.map((ep) => ({ ep, biases: episodeBiases(ep, sets.get(ep.id)!.items) }));
   const portfolio = portfolioBiases(
