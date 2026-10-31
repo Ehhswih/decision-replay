@@ -1,0 +1,4 @@
+# 统一用 LF 换行：部署到 Linux 服务器的脚本和配置不能带 CRLF
+* text=auto eol=lf
+*.ico binary
+*.png binary
