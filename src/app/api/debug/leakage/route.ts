@@ -35,7 +35,7 @@ export async function GET(req: Request) {
       : EX_ANTE_SYSTEM.replace("股票名称已替换为\"标的A\"，日期已替换为相对决策日的天数（D-3 表示决策日之前 3 天）。不要猜测标的A是哪家公司，也", "");
     const r = await chatJson<Record<string, unknown>>(
       system,
-      exAnteUser({ decisionTime, reason: t.reason && anon ? anon.text(t.reason) : t.reason, plan: "", pack }),
+      exAnteUser({ decisionTime, reason: t.reason && anon ? anon.text(t.reason) : t.reason, plan: "", pack, negativeIds: [] }),
     );
     if (!r.ok) return { error: r.message };
     const raw = JSON.stringify(r.data);

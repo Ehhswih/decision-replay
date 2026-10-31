@@ -143,7 +143,10 @@ export async function generateReview(
   for (const [i, t] of buys.entries()) {
     onStage(`生成当时视角 ${i + 1}/${buys.length}`);
     const { pack, anon, decisionTime } = exAntePack(ep, set.items, t, true);
-    const r = await chatJson<ExAnteOut>(EX_ANTE_SYSTEM, exAnteUser({ decisionTime, reason: t.reason ? anon!.text(t.reason) : null, plan: planText(t), pack }));
+    // 规则列出的 B8 候选，让 AI 逐条核对，不自己挑
+    const b8 = biases.find((b) => b.ruleId === "B8" && b.tradeId === t.id);
+    const negativeIds = b8?.needsAi ? b8.evidenceIds.filter((id) => pack.some((p) => p.id === id)) : [];
+    const r = await chatJson<ExAnteOut>(EX_ANTE_SYSTEM, exAnteUser({ decisionTime, reason: t.reason ? anon!.text(t.reason) : null, plan: planText(t), pack, negativeIds }));
     usage.calls++;
     usage.latencyMs += r.latencyMs;
     if (!r.ok) {

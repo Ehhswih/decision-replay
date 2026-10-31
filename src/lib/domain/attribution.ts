@@ -102,6 +102,8 @@ export function attribute(
     return !!e && CONTRARY_KINDS.has(e.kind) && e.tone !== "positive";
   };
   const failed = fa?.text.trim() && fa.evidenceIds.some(contrary) ? fa : null;
+  // 相反的证据买入时已经能看到，就不是"事后才出现的意外"，优先归为看错了
+  const failedExAnte = !!failed && failed.evidenceIds.some((id) => contrary(id) && classify(byId.get(id)!, firstBuy) === "ex_ante");
 
   let errorType: ErrorType;
   let errorReason: Point;
@@ -111,6 +113,9 @@ export function attribute(
   } else if (b7?.outcome === "hit") {
     errorType = "execution";
     errorReason = { text: "有计划但没按计划执行", evidenceIds: b7.evidenceIds };
+  } else if (outcome === "loss" && failed && failedExAnte) {
+    errorType = "judgment";
+    errorReason = { text: `买入理由里的假设被证据否定，相反的证据买入时已经能看到：${failed.text}`, evidenceIds: failed.evidenceIds };
   } else if (outcome === "loss" && process === "good" && expost.length && !exanteNeg) {
     errorType = "unforeseeable";
     errorReason = {

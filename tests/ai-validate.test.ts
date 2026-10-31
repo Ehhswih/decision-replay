@@ -102,22 +102,45 @@ describe("合规过滤的边界", () => {
 import { resolveB8 } from "@/lib/ai/b8";
 import type { BiasResult } from "@/lib/domain/biases";
 
+// candidates 是规则列出的候选负面信息（规则结果的 evidenceIds）
+const b8 = (candidates: string[]): BiasResult => ({ ruleId: "B8", name: "选择性关注", rule: "", scope: "trade", outcome: "undetermined", tradeId: "t", finding: "", evidenceIds: candidates, alternatives: [], confidence: "low", needsAi: true });
+
 describe("选择性关注（B8）定论", () => {
-  const b: BiasResult = { ruleId: "B8", name: "选择性关注", rule: "", scope: "trade", outcome: "undetermined", tradeId: "t", finding: "", evidenceIds: [], alternatives: [], confidence: "low", needsAi: true };
   const e = (id: string, kind: Evidence["kind"], important = false): Evidence => ({ id, kind, title: id, source: "扶摇", eventTime: 0, availableAt: 0, precision: "ms", fetchedAt: null, status: "ok", important });
-  const map = new Map([e("n1", "news"), e("n2", "news"), e("a1", "anomaly"), e("x1", "notice")].map((x) => [x.id, x]));
+  const map = new Map([e("n1", "news"), e("n2", "news"), e("a1", "anomaly"), e("x1", "notice"), e("pos", "news", true)].map((x) => [x.id, x]));
 
   it("没提到公告或异动才算命中；只漏了普通新闻判无法判定；都回应了算未命中", () => {
-    expect(resolveB8(b, [{ evidenceId: "a1", addressed: false }, { evidenceId: "n1", addressed: false }], map)).toMatchObject({ outcome: "hit", evidenceIds: ["a1"], confidence: "low" });
-    expect(resolveB8(b, [{ evidenceId: "n1", addressed: false }, { evidenceId: "n2", addressed: false }], map).outcome).toBe("undetermined");
-    expect(resolveB8(b, [{ evidenceId: "x1", addressed: true }], map).outcome).toBe("not_hit");
-    expect(resolveB8(b, [{ evidenceId: "a1", addressed: false }, { evidenceId: "x1", addressed: false }], map).confidence).toBe("mid");
+    expect(resolveB8(b8(["a1", "n1"]), [{ evidenceId: "a1", addressed: false }, { evidenceId: "n1", addressed: false }], map)).toMatchObject({ outcome: "hit", evidenceIds: ["a1"], confidence: "low" });
+    expect(resolveB8(b8(["n1", "n2"]), [{ evidenceId: "n1", addressed: false }, { evidenceId: "n2", addressed: false }], map).outcome).toBe("undetermined");
+    expect(resolveB8(b8(["x1"]), [{ evidenceId: "x1", addressed: true }], map).outcome).toBe("not_hit");
+    expect(resolveB8(b8(["a1", "x1"]), [{ evidenceId: "a1", addressed: false }, { evidenceId: "x1", addressed: false }], map).confidence).toBe("mid");
+  });
+
+  it("AI 自己加进来的、不在规则候选里的证据不算（比如标题正面的回购新闻）", () => {
+    const r = resolveB8(b8(["x1"]), [{ evidenceId: "pos", addressed: false }, { evidenceId: "x1", addressed: true }], map);
+    expect(r).toMatchObject({ outcome: "not_hit", evidenceIds: ["x1"], finding: "买入前的 1 条负面信息在理由里都有回应" });
+  });
+
+  it("规则列出的候选 AI 没核对到，不能判未命中", () => {
+    expect(resolveB8(b8(["x1", "a1"]), [{ evidenceId: "x1", addressed: true }], map)).toMatchObject({ outcome: "undetermined", needsAi: false });
+    expect(resolveB8(b8(["x1", "a1"]), [{ evidenceId: "x1", addressed: true }], map).finding).toContain("另外 1 条 AI 没有核对");
+    expect(resolveB8(b8(["a1"]), [{ evidenceId: "pos", addressed: false }], map)).toMatchObject({ outcome: "undetermined", needsAi: false, finding: expect.stringContaining("AI 没有逐条核对") });
+  });
+
+  it("同一条被核对两次只算一次", () => {
+    const r = resolveB8(b8(["a1", "x1"]), [{ evidenceId: "a1", addressed: false }, { evidenceId: "a1", addressed: false }, { evidenceId: "x1", addressed: true }], map);
+    expect(r).toMatchObject({ outcome: "hit", evidenceIds: ["a1"], confidence: "low" });
+  });
+
+  it("规则没有列出候选时，原样返回规则结果", () => {
+    const rule: BiasResult = { ...b8([]), outcome: "not_hit", needsAi: false, finding: "买入前 10 天内没有找到当时可知的负面信息" };
+    expect(resolveB8(rule, [{ evidenceId: "a1", addressed: false }], map)).toBe(rule);
   });
 });
 
 describe("B8 相关性", () => {
   it("和买入逻辑无关的负面异动没提到，不算忽略", () => {
-    const b: BiasResult = { ruleId: "B8", name: "选择性关注", rule: "", scope: "trade", outcome: "undetermined", tradeId: "t", finding: "", evidenceIds: [], alternatives: [], confidence: "low", needsAi: true };
+    const b = b8(["a1"]);
     const a1: Evidence = { id: "a1", kind: "anomaly", title: "板块集体下跌", source: "扶摇", eventTime: 0, availableAt: 0, precision: "ms", fetchedAt: null, status: "ok" };
     expect(resolveB8(b, [{ evidenceId: "a1", addressed: false, relevant: false }], new Map([["a1", a1]])).outcome).toBe("undetermined");
   });

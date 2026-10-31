@@ -4,7 +4,7 @@ import { Tag } from "@/components/timing-badge";
 import { ClaimList, EvidenceChips, Section } from "./claims";
 import { OUTCOME_TEXT, fmtDateTime } from "@/lib/labels";
 import type { Evidence } from "@/lib/domain/evidence";
-import type { BiasResult } from "@/lib/domain/biases";
+import { isB8Negative, type BiasResult } from "@/lib/domain/biases";
 import type { ExAnteView } from "@/lib/ai/review";
 import type { EpisodeTrade } from "@/lib/domain/types";
 
@@ -33,6 +33,10 @@ export function ExAntePanel({
   const isSell = trade.side === "sell";
   // 卖出时的信号只用卖出那一刻已知的数据；卖出后的走势（事后代价）在这里不显示
   const signals = biases.filter((b) => b.tradeId === trade.id && (isSell ? ["B3", "B6", "B7"] : ["B1", "B2"]).includes(b.ruleId));
+  // 和 B8 用同一个口径：只列规则认定的负面信息，AI 顺带提到的正面标题新闻、10 天以外的旧消息不列
+  const ignoredNegatives = (view?.negativesCheck ?? []).filter(
+    (n, i, all) => !n.addressed && n.relevant !== false && isB8Negative(evidence.get(n.evidenceId), trade.ts) && all.findIndex((x) => x.evidenceId === n.evidenceId) === i,
+  );
   const planSource = isSell ? plan : trade;
   const planText = planSource
     ? [planSource.planStop != null ? `止损 ${planSource.planStop}%` : null, planSource.planTarget != null ? `目标 +${planSource.planTarget}%` : null].filter(Boolean).join("，")
@@ -115,18 +119,16 @@ export function ExAntePanel({
             ) : (
               <p className="text-sm text-muted-foreground">理由里没有可以核对的具体说法</p>
             )}
-            {view.negativesCheck.some((n) => !n.addressed && n.relevant !== false) && (
+            {ignoredNegatives.length > 0 && (
               <div className="mt-4 pt-3 border-t border-border">
                 <h3 className="text-[13px] font-medium mb-2">当时可知、和买入逻辑相关、但理由里没提到的负面信息</h3>
                 <ul className="space-y-1.5 text-sm">
-                  {view.negativesCheck
-                    .filter((n) => !n.addressed && n.relevant !== false)
-                    .map((n) => (
-                      <li key={n.evidenceId} className="flex flex-wrap gap-1.5 items-baseline">
-                        <EvidenceChips ids={[n.evidenceId]} evidence={evidence} decisionTs={trade.ts} onOpen={onOpen} />
-                        <span>{evidence.get(n.evidenceId)?.title}</span>
-                      </li>
-                    ))}
+                  {ignoredNegatives.map((n) => (
+                    <li key={n.evidenceId} className="flex flex-wrap gap-1.5 items-baseline">
+                      <EvidenceChips ids={[n.evidenceId]} evidence={evidence} decisionTs={trade.ts} onOpen={onOpen} />
+                      <span>{evidence.get(n.evidenceId)?.title}</span>
+                    </li>
+                  ))}
                 </ul>
               </div>
             )}

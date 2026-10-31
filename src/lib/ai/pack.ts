@@ -3,6 +3,7 @@
 
 import { DAY_MS, atShTime, shDate } from "@/lib/time";
 import { classify, TIMING_LABEL } from "@/lib/domain/pit";
+import { isB8Negative } from "@/lib/domain/biases";
 import type { Evidence } from "@/lib/domain/evidence";
 import type { Episode, EpisodeTrade } from "@/lib/domain/types";
 
@@ -90,6 +91,8 @@ export function exAntePack(ep: Episode, items: Evidence[], decision: EpisodeTrad
     ...pick(known.filter(recent), ["notice"], 6),
     ...pick(known.filter(recent), ["anomaly"], 8),
     ...pick(known.filter((e) => recent(e) && e.important), ["news"], 15),
+    // B8 要 AI 逐条核对的负面信息，不管重不重要都得放进来
+    ...known.filter((e) => isB8Negative(e, decision.ts)),
     ...known.filter((e) => e.kind === "industry"),
   ];
   const timeOf = (e: Evidence) => (e.availableAt == null ? "时间未知" : anon ? anon.text(shDate(e.availableAt)) : shDate(e.availableAt));

@@ -91,6 +91,9 @@ describe("单个持仓段的规则", () => {
     const before = find(episodeBiases(ep, [neg("a1", T0 - 86_400_000)]), "B8");
     expect(before).toMatchObject({ outcome: "undetermined", needsAi: true, evidenceIds: ["a1"] });
     expect(find(episodeBiases(ep, [neg("a2", T0 + 86_400_000)]), "B8").outcome).toBe("not_hit");
+    // 10 天以外的旧消息、语气不是负面的，都不算候选
+    expect(find(episodeBiases(ep, [neg("a3", T0 - 11 * 86_400_000)]), "B8").outcome).toBe("not_hit");
+    expect(find(episodeBiases(ep, [{ ...neg("a4", T0 - 86_400_000), tone: "positive" }]), "B8").outcome).toBe("not_hit");
   });
 });
 
@@ -159,6 +162,19 @@ describe("过程、结果和问题归类", () => {
     const a = attribute(ep, [notice], biases, { failedAssumption: { text: "理由说资金在抢筹，但买入前一天已有大股东减持计划", evidenceIds: ["trade:b", "notice:1"] } });
     expect(a.errorType).toBe("judgment");
     expect(a.errorReason.evidenceIds).toContain("notice:1");
+  });
+
+  it("过程好、持仓期间有利空，但推翻假设的证据买入前就能看到：看错了，不算事后意外", () => {
+    const b = trade("b", "buy", T0, { reason: "交付节奏不错", planStop: 8 });
+    const ep = episode([b, trade("s", "sell", T0 + 86_400_000 * 4)], -8.5);
+    const later: Evidence = { id: "anomaly:x", kind: "anomaly", title: "异动「跌停」：半年度业绩预亏", source: "扶摇", eventTime: T0 + 86_400_000 * 3, availableAt: T0 + 86_400_000 * 3, precision: "ms", fetchedAt: null, status: "ok", tone: "negative", important: true };
+    const before: Evidence = { id: "news:r", kind: "news", title: "6月销量同比承压", source: "扶摇", eventTime: T0 - 86_400_000 * 4, availableAt: T0 - 86_400_000 * 4, precision: "ms", fetchedAt: null, status: "ok", tone: "negative", important: true };
+    const biases = [bias("B1", "not_hit"), bias("B7", "not_hit"), bias("B8", "not_hit")];
+    // 只有事后证据：还是"可能受事后事件影响"
+    expect(attribute(ep, [later], biases, { failedAssumption: { text: "交付节奏没有兑现", evidenceIds: ["anomaly:x"] } }).errorType).toBe("unforeseeable");
+    const a = attribute(ep, [later, before], biases, { failedAssumption: { text: "理由说交付节奏不错，但买入前已有销量同比承压的研报", evidenceIds: ["news:r", "anomaly:x"] } });
+    expect(a.errorType).toBe("judgment");
+    expect(a.errorReason.text).toContain("买入时已经能看到");
   });
 
   it("止损没执行：没做好", () => {

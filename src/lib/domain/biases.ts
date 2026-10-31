@@ -74,6 +74,18 @@ export const BIAS_META: Record<BiasId, { name: string; rule: string; alternative
 
 const byId = (items: Evidence[]) => new Map(items.map((e) => [e.id, e]));
 
+/** B8 的候选：买入前 10 天内、当时可知、语气负面的新闻、公告、异动 */
+export function isB8Negative(e: Evidence | undefined, decisionTs: number): boolean {
+  return (
+    !!e &&
+    e.tone === "negative" &&
+    (e.kind === "news" || e.kind === "notice" || e.kind === "anomaly") &&
+    e.availableAt != null &&
+    e.availableAt >= decisionTs - 10 * 86_400_000 &&
+    classify(e, decisionTs) === "ex_ante"
+  );
+}
+
 function result(ruleId: BiasId, scope: BiasResult["scope"], partial: Omit<BiasResult, "ruleId" | "name" | "rule" | "alternatives" | "scope">): BiasResult {
   const m = BIAS_META[ruleId];
   return { ruleId, name: m.name, rule: m.rule, alternatives: m.alternatives, scope, ...partial };
@@ -127,14 +139,7 @@ export function episodeBiases(ep: Episode, items: Evidence[], attentionGaps: str
     );
 
     // B8 选择性关注：规则先列出买入前 10 天内当时可知的负面信息，是否"没提到"交给 AI 判断
-    const negatives = items.filter(
-      (e) =>
-        e.tone === "negative" &&
-        (e.kind === "news" || e.kind === "notice" || e.kind === "anomaly") &&
-        e.availableAt != null &&
-        e.availableAt >= t.ts - 10 * 86_400_000 &&
-        classify(e, t.ts) === "ex_ante",
-    );
+    const negatives = items.filter((e) => isB8Negative(e, t.ts));
     const gap = !negatives.length && attentionGaps.length > 0;
     out.push(
       result("B8", "trade", {

@@ -21,7 +21,7 @@ export const EX_POST_SYSTEM = `${COMMON}
 程序已经用规则算好了行为偏差和过程评级（见"规则结果"），你不要推翻规则的判定，只需要解释它们、补充其他可能的解释，并提炼教训。
 教训必须是下次决策时可以执行的检查动作（例如"买入前先看 5 日涨幅，超过 15% 时先写下为什么不是追高"），不能是买卖建议或涨跌判断。`;
 
-export function exAnteUser(params: { decisionTime: string; reason: string | null; plan: string; pack: PackItem[] }) {
+export function exAnteUser(params: { decisionTime: string; reason: string | null; plan: string; pack: PackItem[]; negativeIds: string[] }) {
   return `## 决策
 时间：${params.decisionTime}（买入）
 当时理由：${params.reason ?? "（没有记录）"}
@@ -29,6 +29,9 @@ export function exAnteUser(params: { decisionTime: string; reason: string | null
 
 ## 证据（共 ${params.pack.length} 条，都是决策时已经可知的）
 ${JSON.stringify(params.pack)}
+
+## 需要逐条核对的负面信息
+${params.negativeIds.length ? `规则从证据里挑出的买入前 10 天内语气负面的新闻、公告、异动：${JSON.stringify(params.negativeIds)}。negatives_check 只核对这几条，每条都要给出结果，不要加入其他证据。` : "规则没有找到买入前 10 天内语气负面的新闻、公告、异动，negatives_check 返回空数组。"}
 
 ## 输出 JSON 格式
 {
@@ -38,7 +41,7 @@ ${JSON.stringify(params.pack)}
   "reason_check": [{"claim": "理由里的一个说法（原文）", "status": "supported|contradicted|unverifiable", "text": "依据证据的说明", "evidence_ids": ["..."]}],
   "negatives_check": [{"evidence_id": "一条当时可知的负面信息的 id", "addressed_in_reason": false, "relevant": true, "note": "理由是否提到或回应了它；是否和买入逻辑相关"}]
 }
-supporting 和 warnings 各 2–5 条；reason_check 覆盖理由里的每个主要说法；negatives_check 只针对证据里语气负面的新闻、公告、异动。relevant 表示这条负面信息是否直接动摇理由里的买入逻辑：例如理由基于业绩，涉及业绩、经营、估值、减持、监管或公司风险提示的算相关；泛泛的板块下跌、市场情绪、资金流向不算相关。`;
+supporting 和 warnings 各 2–5 条；reason_check 覆盖理由里的每个主要说法；negatives_check 只针对上面列出的负面信息。relevant 表示这条负面信息是否直接动摇理由里的买入逻辑：例如理由基于业绩，涉及业绩、经营、估值、减持、监管或公司风险提示的算相关；泛泛的板块下跌、市场情绪、资金流向不算相关。`;
 }
 
 export function exPostUser(params: { summary: string; trades: string; rules: string; pack: PackItem[] }) {
