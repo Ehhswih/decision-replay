@@ -84,8 +84,8 @@ export function DecisionNotes({ notes, onChange }: { notes: DecisionNote[]; onCh
                     {n.versions.map((v) => (
                       <li key={v.id} className="border-l-2 border-border pl-3">
                         <p className="text-xs text-muted-foreground num">
-                          第 {v.version} 版 · {fmtDateTime(v.createdAt)}
-                          {v.version === 1 && " · 原始记录"}
+                          第 {v.version} 版，{fmtDateTime(v.createdAt)}
+                          {v.version === 1 && "（原始记录）"}
                         </p>
                         <p>{v.reason}</p>
                         {planText(v.planStop, v.planTarget) && <p className="text-muted-foreground">{planText(v.planStop, v.planTarget)}</p>}

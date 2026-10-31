@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tag } from "@/components/timing-badge";
 import { Section } from "./claims";
-import { ERROR_TYPE_TEXT, fmtDateTime } from "@/lib/labels";
+import { ERROR_TYPE_TEXT, fmtDateTime, quadrantText } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import type { Evidence } from "@/lib/domain/evidence";
 import type { BiasResult } from "@/lib/domain/biases";
@@ -150,7 +150,7 @@ export function BeforeAfter({
           <h3 className="text-[13px] font-medium text-expost">揭晓后（规则和 AI）</h3>
           <p>
             <span className="text-muted-foreground mr-2">整段</span>
-            {attribution.quadrant}，{ERROR_TYPE_TEXT[attribution.errorType]}
+            {quadrantText(attribution.quadrant)}，{ERROR_TYPE_TEXT[attribution.errorType]}
           </p>
           <p>
             <span className="text-muted-foreground mr-2">这笔命中的规则</span>
@@ -193,7 +193,7 @@ export function LinkedNotes({ notes, trade, revealed }: { notes: DecisionNote[];
               {(revealed ? n.versions : before).map((v) => (
                 <div key={v.id} className={cn("border-l-2 pl-3", v.createdAt <= trade.ts ? "border-exante" : "border-expost")}>
                   <p className="text-xs text-muted-foreground num">
-                    第 {v.version} 版 · {fmtDateTime(v.createdAt)} · {v.createdAt <= trade.ts ? "成交前写的" : "成交后补充，不算当时的理由"}
+                    第 {v.version} 版，{fmtDateTime(v.createdAt)}，{v.createdAt <= trade.ts ? "成交前写的" : "成交后补充，不算当时的理由"}
                   </p>
                   <p className="leading-relaxed">{v.reason}</p>
                   {(v.planStop != null || v.planTarget != null) && (

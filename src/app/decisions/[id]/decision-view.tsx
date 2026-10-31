@@ -316,8 +316,8 @@ export default function DecisionView() {
           <div className="panel p-3 sm:p-4">
             <KlineChart raw={set.series.raw} adj={set.series.adj} trades={chartTrades} events={chartEvents} decisionDate={fmtDate(decisionTs)} cutoffTs={curtain ? decisionTs : null} onEventClick={openById} />
             <p className="px-1 pt-2 text-xs leading-relaxed text-muted-foreground">
-              {curtain ? "回到当时：K 线用不复权价格，只画决策时已经收盘的部分（盘中成交时当天那根也不画），纵轴也只按这部分数据定范围。" : "K 线为前复权。"}
-              三角是成交，圆点是公告、财报、异动等事件（点击查看出处）。
+              {curtain ? "回到当时：K 线用不复权价格，只画决策前已经收盘的部分（盘中成交的话，当天那根也不画），纵轴也只按这部分定范围。" : "K 线是前复权价格。"}
+              三角是成交，圆点是公告、财报、异动等事件，点一下能看出处。
               {set.episode.corpEvents.length > 0 && " 持仓期间有除权除息，不复权价格会跳空，收益按复权口径计算。"}
             </p>
           </div>

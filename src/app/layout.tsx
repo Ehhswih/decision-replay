@@ -9,7 +9,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "决策回放",
-  description: "复盘历史投资决策：分清当时可知和事后才知，沉淀成下一次决策的检查清单",
+  description: "复盘历史投资决策：分清当时可知和事后才知，把教训变成下次下单前的检查清单",
 };
 
 export const viewport: Viewport = {

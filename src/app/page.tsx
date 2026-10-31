@@ -12,16 +12,16 @@ import type { TimingKey } from "@/lib/labels";
 type ImportIssue = { severity: string; message: string; rowNo?: number };
 
 const STEPS = [
-  ["导入成交", "按股票切成持仓段，核对成交价是否落在当天行情区间内、是否交易日。"],
-  ["回到当时", "只看下单前可知的证据：支持理由的、已经存在的风险、理由里没提到的负面信息。"],
-  ["揭晓结果", "用规则判定追涨、偏离计划等行为，区分看错了、没做好和可能受事后事件影响，证据不够时写暂无法归类；每条结论都能点回原始数据。"],
-  ["带走清单", "把教训加入清单，下次在「决策前检查」里逐条对照这只股票当下的数据。"],
+  ["导入成交", "按股票切成持仓段，核对每笔成交是不是在交易日，价格是否落在当天的最高价和最低价之间。"],
+  ["回到当时", "只看下单前已经公开的信息：哪些支持你的理由，哪些风险当时就在，哪些负面消息理由里没提。"],
+  ["揭晓结果", "规则判定有没有追涨、偏离计划等行为；问题分成看错了、没做好、可能受事后事件影响，证据不够就写暂无法归类。每条结论都能点回原始数据。"],
+  ["带走清单", "认可的教训加入清单。下次在「决策前检查」里，清单会逐条对照你要交易的那只股票的最新数据。"],
 ];
 
 const TIMINGS: [TimingKey, string][] = [
   ["ex_ante", "下单时已经公开的行情、财报、公告和新闻。评价当时的决定只用这些。"],
   ["ex_post", "下单之后才出现的信息。只用来解释结果，不用来指责当时没看到。"],
-  ["uncertain", "和下单同一天发布、只精确到日期，或者只有当前值的数据，分不清先后。"],
+  ["uncertain", "和下单同一天发布、但只精确到日期的信息，以及只有当前值的数据，都分不清先后。"],
 ];
 
 export default function Home() {
@@ -83,7 +83,7 @@ export default function Home() {
             先回到你下单的那一刻
           </h1>
           <p className="text-[15px] sm:text-base leading-7 sm:leading-8 text-muted-foreground max-w-xl">
-            复盘时最容易犯的错，是拿后来才知道的事去评价当时的决定。决策回放把你的成交、当时写下的理由、行情和公告对齐到一条时间线上，先只给你看下单前已经公开的信息，再揭晓后来发生了什么，最后把教训变成下次下单前要过的检查清单。
+            复盘时最容易犯的错，是拿后来才知道的事去评价当时的决定。决策回放把你的成交、当时写下的理由、行情和公告对齐到一条时间线上：先只给你看下单前已经公开的信息，再揭晓后来发生了什么。认可的教训变成下次下单前的检查清单。
           </p>
           <div className="flex flex-wrap gap-3">
             <Button size="lg" className="h-11 px-5 rounded-full text-[15px]" onClick={useDemo}>
@@ -121,18 +121,23 @@ export default function Home() {
               </Button>
             </div>
           )}
-          <p className="text-xs leading-relaxed text-muted-foreground max-w-xl">
-            支持券商导出的交割单（CSV，UTF-8 或 GBK），同花顺、东方财富等常见列名会自动识别；转账、分红、申购、逆回购、ETF 等不是股票买卖的记录自动跳过，同一委托的分笔成交合并成一笔。
-            <a href="/trades-template.csv" download className="text-exante underline underline-offset-2 mx-1">
-              下载模板
-            </a>
-            或
-            <a href="/sample-delivery-ths.csv" download="示例交割单-同花顺格式.csv" className="text-exante underline underline-offset-2 mx-1">
-              下载一份示例交割单
-            </a>
-            （模拟一位散户 7 个月的 62 笔交易，价格来自真实行情）。
-            数据只用于你自己的复盘，不需要登录，导入的成交 7 天后自动删除，也可以随时手动删除。
-          </p>
+          <div className="text-xs leading-relaxed text-muted-foreground max-w-xl space-y-1.5">
+            <p>
+              支持券商导出的 CSV 交割单（UTF-8 或 GBK），同花顺、东方财富等常见写法能自动识别。转账、分红、申购、逆回购、ETF 这类不是股票买卖的记录会自动跳过，同一委托的分笔成交合并成一笔。
+            </p>
+            <p>
+              可以
+              <a href="/trades-template.csv" download className="text-exante underline underline-offset-2 mx-1">
+                下载模板
+              </a>
+              按格式整理自己的成交，也可以
+              <a href="/sample-delivery-ths.csv" download="示例交割单-同花顺格式.csv" className="text-exante underline underline-offset-2 mx-1">
+                下载一份示例交割单
+              </a>
+              先试试导入（模拟一位散户 7 个月的 62 笔交易，价格来自真实行情）。
+            </p>
+            <p>数据只用于你自己的复盘，不需要登录；导入的成交 7 天后自动删除，也可以随时手动删除。</p>
+          </div>
           {issues.length > 0 && (
             <ul className="text-sm space-y-1 panel p-3">
               {issues.slice(0, 10).map((i, k) => (

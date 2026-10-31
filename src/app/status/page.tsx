@@ -34,7 +34,7 @@ export default function StatusPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-[1.75rem] font-semibold tracking-tight">数据状态</h1>
-        <p className="text-sm text-muted-foreground mt-1">每一次外部调用都有记录。数据取不到、过期或被降级时，复盘页面会在「数据源提示」和「不确定因素」里说明，不会当作正常。</p>
+        <p className="text-sm text-muted-foreground mt-1">每一次外部调用都有记录。数据没取到、过期或被降级时，复盘页面会在「数据源提示」和「不确定因素」里写明，不会当成正常数据。</p>
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">

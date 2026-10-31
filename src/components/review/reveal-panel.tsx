@@ -162,7 +162,7 @@ export function RevealPanel({
               {u.text} <EvidenceChips ids={u.evidenceIds} evidence={evidence} decisionTs={decisionTs} onOpen={onOpen} />
             </li>
           ))}
-          {!review && <li className="text-muted-foreground">生成复盘后列出数据缺失、时序不确定等情况。</li>}
+          {!review && <li className="text-muted-foreground">生成复盘后，这里会列出数据缺失、时序不确定等情况。</li>}
         </ul>
       </Section>
 

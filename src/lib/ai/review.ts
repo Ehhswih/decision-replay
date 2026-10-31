@@ -64,7 +64,7 @@ const TEMPLATES: Record<string, { text: string; trigger: LessonTrigger }> = {
   B1: { text: "买入前先看 5 日涨幅：超过 15% 时，先写下这次为什么不算追高", trigger: "chase" },
   B2: { text: "买入热股榜前 20 或刚上龙虎榜的股票前，先写下不看热度时的买入理由", trigger: "hot" },
   B3: { text: "连续下跌后想卖时，先对照买入时写的止损线，再决定是否执行", trigger: "panic" },
-  B4: { text: "亏损持仓超过原定持有期时，强制复查一次买入逻辑是否还成立", trigger: "disposition" },
+  B4: { text: "亏损持仓超过原定持有期时，先复查一次买入逻辑还成不成立", trigger: "disposition" },
   B5: { text: "同一只股票 10 个交易日内准备第三次交易前，先复查前两次的结果和手续费", trigger: "overtrade" },
   B6: { text: "深度浮亏时提前写下离场条件，不把回到成本价当作卖出理由", trigger: "anchor" },
   B7: { text: "止损线被跌破当天，要么执行，要么写下不执行的理由", trigger: "plan" },

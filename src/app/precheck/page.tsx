@@ -148,7 +148,7 @@ export default function PrecheckPage() {
       <div className="space-y-4 min-w-0">
         {!res && !busy && (
           <div className="rounded-xl border border-dashed border-border bg-card/60 p-8 text-sm leading-relaxed text-muted-foreground">
-            填好左边再检查。会用到：最近 20 个交易日行情、热股排名、龙虎榜、近 10 天的异动、新闻和公告，以及
+            填好股票和打算，点「开始检查」。会用到最近 20 个交易日的行情、热股排名、龙虎榜，近 10 天的异动、新闻和公告，以及
             <Link href="/checklist" className="text-exante underline underline-offset-2 mx-1">
               我的清单
             </Link>
@@ -199,7 +199,7 @@ export default function PrecheckPage() {
 
             <section className="panel p-5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
               <p className="text-sm text-muted-foreground">
-                {ran?.reason ? "把这次的理由、计划和上面的检查结果原样存下来，之后复盘时可以对照当时是怎么想的。" : "左边没有写理由。写下理由再检查一次，才能存为决策记录。"}
+                {ran?.reason ? "把这次的理由、计划和上面的检查结果原样存下来，之后复盘时可以对照当时是怎么想的。" : "这次检查没有写理由。写上理由再检查一次，才能存为决策记录。"}
               </p>
               <Button size="sm" variant={saved ? "outline" : "default"} onClick={saveNote} disabled={saved || !ran?.reason}>
                 {saved ? "已保存" : "保存为决策记录"}

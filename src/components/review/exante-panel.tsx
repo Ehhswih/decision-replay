@@ -74,7 +74,7 @@ export function ExAntePanel({
       {isSell ? (
         <Section title="卖出时能看到什么">
           <p className="text-sm text-muted-foreground leading-relaxed">
-            AI 的当时视角只针对买入决策生成。卖出这一刻，上面的信号都由程序用卖出前已知的数据算出；右侧「当时可知」一栏是卖出前已经公开的全部证据，卖出之后的走势和事件仍然遮住，点「揭晓结果」再看。
+            AI 的当时视角只为买入生成。卖出这一刻的信号都由程序用卖出前已知的数据算出；「当时可知」一栏是卖出前已经公开的全部证据。卖出之后的走势和事件仍然遮住，点「揭晓结果」再看。
           </p>
         </Section>
       ) : !view ? (
@@ -121,7 +121,7 @@ export function ExAntePanel({
             )}
             {ignoredNegatives.length > 0 && (
               <div className="mt-4 pt-3 border-t border-border">
-                <h3 className="text-[13px] font-medium mb-2">当时可知、和买入逻辑相关、但理由里没提到的负面信息</h3>
+                <h3 className="text-[13px] font-medium mb-2">理由里没提到的负面信息（当时可知，且和买入逻辑相关）</h3>
                 <ul className="space-y-1.5 text-sm">
                   {ignoredNegatives.map((n) => (
                     <li key={n.evidenceId} className="flex flex-wrap gap-1.5 items-baseline">

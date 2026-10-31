@@ -198,7 +198,7 @@ export default function DecisionsPage() {
   if (!data) {
     return (
       <div className="space-y-4" aria-busy>
-        <p className="text-sm text-muted-foreground">正在按持仓段整理成交、拉取行情和资讯并计算规则结果……第一次打开一个组合大约需要 1 分钟，之后读缓存。</p>
+        <p className="text-sm text-muted-foreground">正在按持仓段整理成交、拉取行情和资讯、计算规则结果……第一次打开一个组合大约要 1 分钟，之后再打开会快很多。</p>
         <div className="panel h-36 animate-pulse" />
         <div className="panel h-64 animate-pulse" />
       </div>
@@ -221,7 +221,7 @@ export default function DecisionsPage() {
             {data.workspace.isDemo
               ? "示例组合：一位虚构投资者 2026 年 6–9 月的 21 笔成交，股票和行情是真实的。"
               : `你导入的 ${data.episodes.reduce((a, r) => a + r.episode.trades.length, 0)} 笔成交，按持仓段（从买入到清仓）分组。导入的数据保留 7 天。`}
-            每一段可以回到当时看下单前知道什么，再揭晓结果。
+            每一段都可以先回到当时，看下单前知道什么，再揭晓结果。
           </p>
         </div>
         <div className="flex gap-2">
