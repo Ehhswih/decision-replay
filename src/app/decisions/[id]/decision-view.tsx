@@ -17,6 +17,7 @@ import type { Evidence } from "@/lib/domain/evidence";
 import type { BiasResult } from "@/lib/domain/biases";
 import type { Attribution } from "@/lib/domain/attribution";
 import type { Episode } from "@/lib/domain/types";
+import { planAt } from "@/lib/domain/plan";
 import type { EvidenceSet } from "@/lib/pipeline";
 import type { ReviewDoc } from "@/lib/ai/review";
 import type { DecisionNote, Prejudgment, Verdict } from "@/lib/records";
@@ -113,10 +114,28 @@ export default function DecisionView() {
   }, [pollReview]);
 
   const generate = async (force: boolean) => {
+    const before = rv;
     setRv({ status: "running", stage: "排队中" });
-    await fetch(`/api/episodes/${encodeURIComponent(episodeId)}/review${force ? "?force=1" : ""}`, { method: "POST" });
+    // 限流、网络失败都要把原因显示出来，不能一直停在"排队中"
+    const started = await fetch(`/api/episodes/${encodeURIComponent(episodeId)}/review${force ? "?force=1" : ""}`, { method: "POST" })
+      .then(async (x) => ({ ok: x.ok, body: (await x.json().catch(() => ({}))) as ReviewState }))
+      .catch(() => null);
+    if (!started || !started.ok || started.body.status === "failed") {
+      const error = started?.body.error ?? (started ? "生成失败，请稍后重试" : "网络连接失败，请检查网络后重试");
+      setRv(before.review ? before : { status: "failed", error });
+      toast.error(error);
+      return;
+    }
+    let misses = 0;
     const loop = async () => {
-      const r = await pollReview();
+      const r = await pollReview().catch(() => null);
+      // 查询进度时网络断了：后台还在生成，隔一会儿再查，连续失败 5 次才放弃
+      if (!r) {
+        if (++misses < 5) setTimeout(loop, 5000);
+        else setRv({ status: "failed", error: "查询进度时网络连接失败，刷新页面可以看到最新结果" });
+        return;
+      }
+      misses = 0;
       if (r.status === "running") setTimeout(loop, 2500);
       else if (r.status === "done") toast.success("复盘已生成");
       else if (r.status === "failed") toast.error(r.error ?? "生成失败");
@@ -137,7 +156,11 @@ export default function DecisionView() {
   // 每笔成交都是一个决策点：买入、加仓、卖出都可以"回到当时"
   const points = useMemo(() => episode?.trades ?? [], [episode]);
   const decision = points.find((t) => t.id === decisionId) ?? buys[0];
-  const plan = buys.find((t) => t.planStop != null || t.planTarget != null) ?? null;
+  // 卖出时对照的是卖出之前已经写下的计划，之后加仓时才写的不算
+  const plan = useMemo(() => {
+    const p = planAt(buys, decision?.ts ?? 0);
+    return p.stop != null || p.target != null ? { planStop: p.stop, planTarget: p.target } : null;
+  }, [buys, decision]);
   const pointLabel = (t: (typeof points)[number]) => (t.side === "sell" ? (t.positionAfter > 0 ? "减仓" : "卖出") : t.id === buys[0]?.id ? "买入" : "加仓");
   const evidence = useMemo(() => new Map((set?.items ?? []).map((e) => [e.id, e])), [set]);
   const review = rv.review ?? null;
@@ -249,7 +272,10 @@ export default function DecisionView() {
               {curtain ? (
                 <span className="text-xs text-muted-foreground px-2.5 py-1 rounded-full curtain ring-1 ring-border">收益已遮住</span>
               ) : (
-                <span className={cn("figure text-2xl font-semibold", pctClass(episode.returnPct))}>{pct(episode.returnPct)}</span>
+                <>
+                  <span className={cn("figure text-2xl font-semibold", pctClass(episode.returnPct))}>{pct(episode.returnPct)}</span>
+                  {episode.actionsMissing && <span className="text-xs text-expost">除权除息数据没取到，收益可能漏了分红送转</span>}
+                </>
               )}
             </div>
             <p className="text-sm text-muted-foreground mt-1 num">
@@ -318,7 +344,10 @@ export default function DecisionView() {
             <p className="px-1 pt-2 text-xs leading-relaxed text-muted-foreground">
               {curtain ? "回到当时：K 线用不复权价格，只画决策前已经收盘的部分（盘中成交的话，当天那根也不画），纵轴也只按这部分定范围。" : "K 线是前复权价格。"}
               三角是成交，圆点是公告、财报、异动等事件，点一下能看出处。
-              {set.episode.corpEvents.length > 0 && " 持仓期间有除权除息，不复权价格会跳空，收益按复权口径计算。"}
+              {/* 回到当时只提决策日之前的除权，否则等于提前透露后面会分红送转 */}
+              {curtain
+                ? set.episode.corpEvents.some((e) => e.exDate <= fmtDate(decisionTs)) && " 这之前有过除权除息，不复权价格会跳空。"
+                : set.episode.corpEvents.length > 0 && " 持仓期间有除权除息，不复权价格会跳空，收益按复权口径计算。"}
             </p>
           </div>
 

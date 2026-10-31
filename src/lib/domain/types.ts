@@ -75,4 +75,6 @@ export interface Episode {
   realizedPnl: number | null;
   returnPct: number | null;
   maxPosition: number;
+  /** 除权除息数据没取到：收益里可能漏了分红送转，不能当成准确值 */
+  actionsMissing?: boolean;
 }

@@ -272,6 +272,20 @@ await check("导入：接近真实的同花顺交割单（转账、分红、申�
   return `导入 ${r.json.imported} 笔，合并 ${merged} 组分笔成交，跳过 ${issues.filter((i) => i.code === "skipped").length} 类非买卖记录`;
 });
 
+await check("隐私：把工作区 cookie 伪造成 demo 再导入，示例组合不被覆盖", async () => {
+  const csv = "成交时间,证券代码,证券名称,买卖方向,成交价格,成交数量,手续费\n2026-06-22 10:00,600519,贵州茅台,买入,1400,100,5\n";
+  const form = new FormData();
+  form.append("file", new Blob([csv], { type: "text/csv" }), "forge.csv");
+  const r = await fetch(BASE + "/api/import", { method: "POST", body: form, headers: { cookie: "dr_ws=demo" } });
+  const j = await r.json();
+  const issued = (r.headers.getSetCookie?.() ?? []).find((c) => c.startsWith("dr_ws="))?.split(";")[0].slice(6);
+  assert(j.ok && issued && issued !== "demo", "伪造 demo 时应另开一个工作区");
+  const demo = await fetch(BASE + "/api/episodes").then((x) => x.json());
+  assert(demo.workspace.isDemo && demo.episodes.length === 10, `示例组合应还是 10 段，实际 ${demo.episodes.length}`);
+  await fetch(BASE + "/api/workspace?purge=1", { method: "DELETE", headers: { cookie: `dr_ws=${issued}` } });
+  return `新工作区 ${issued.slice(0, 8)}…，示例组合仍是 ${demo.episodes.length} 段`;
+});
+
 await check("数据状态：配置齐全、iFinD 额度未用完", async () => {
   const r = await req("/api/status");
   const c = r.json.config;

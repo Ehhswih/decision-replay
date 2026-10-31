@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import { visitorId } from "@/lib/checklist";
 import { normalizeCode } from "@/lib/domain/trades";
-import { addNote, listNotes, purgeVisitorRecords, type NoteSnapshot } from "@/lib/records";
+import { addNote, countPrejudgments, listNotes, purgeVisitorRecords, type NoteSnapshot } from "@/lib/records";
 import { clientKey, rateLimit } from "@/lib/rate-limit";
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.abs(v) : null);
@@ -10,7 +10,7 @@ const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max
 export async function GET() {
   await connection();
   const v = await visitorId(false);
-  return Response.json({ notes: v ? listNotes(v) : [] });
+  return Response.json({ notes: v ? listNotes(v) : [], prejudgments: v ? countPrejudgments(v) : 0 });
 }
 
 /** 把一次决策前检查存为决策记录：保存时的理由、计划和检查结果原样留档 */

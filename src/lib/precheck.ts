@@ -144,7 +144,15 @@ export async function runPrecheck(input: PrecheckInput, workspace: string, visit
     facts.push(f);
     if (f.tone === "negative") negatives.push(f);
   }
-  const attentionGaps = [an.status === "failed" ? "异动解读" : "", news.status === "failed" ? "个股新闻" : "", nt.status === "failed" ? "公告" : ""].filter(Boolean);
+  // 没取到、只取到一部分、用的是旧缓存，都不能说"没有负面信息"
+  const gapOf = (label: string, status: string, partial: string) =>
+    status === "failed" ? `${label}没有取到` : status === "stale" ? `${label}这次没取到、用的是之前缓存的数据` : partial ? `${label}${partial}` : "";
+  const attentionGaps = [
+    gapOf("异动解读", an.status, an.data?.truncated ? "只返回了一部分" : ""),
+    gapOf("个股新闻", news.status, news.complete ? "" : "没有翻完近 10 天"),
+    gapOf("公告", nt.status, ""),
+  ].filter(Boolean);
+  for (const g of attentionGaps) if (!/没有取到$/.test(g)) sourceErrors.push(g);
 
   // 本工作区里这只股票最近的成交
   const recentTrades = a.trades.filter((t) => t.code === code && t.ts >= Date.now() - 14 * DAY_MS);
@@ -179,8 +187,8 @@ export async function runPrecheck(input: PrecheckInput, workspace: string, visit
           : { ...base, status: "triggered", detail: "还没有写止损或目标", factIds: [] };
       case "attention":
         if (negatives.length)
-          return { ...base, status: "triggered", detail: `近 10 天有 ${negatives.length} 条负面信息，理由里需要写明怎么看${attentionGaps.length ? `（${attentionGaps.join("、")}没有取到，可能还有遗漏）` : ""}`, factIds: negatives.map((n) => n.id) };
-        if (attentionGaps.length) return { ...base, status: "unknown", detail: `${attentionGaps.join("、")}没有取到，无法确认近 10 天有没有负面信息`, factIds: [] };
+          return { ...base, status: "triggered", detail: `近 10 天有 ${negatives.length} 条负面信息，理由里需要写明怎么看${attentionGaps.length ? `（${attentionGaps.join("，")}，可能还有遗漏）` : ""}`, factIds: negatives.map((n) => n.id) };
+        if (attentionGaps.length) return { ...base, status: "unknown", detail: `${attentionGaps.join("，")}，无法确认近 10 天有没有负面信息`, factIds: [] };
         return { ...base, status: "clear", detail: "近 10 天的异动、新闻和公告里没有找到负面信息（按标题关键词筛选，可能有遗漏）", factIds: [] };
       case "overtrade":
         return recentTrades.length >= 2

@@ -7,6 +7,7 @@ import { DAY_MS, addDays, shDate } from "@/lib/time";
 import { barTiming, dayTiming, derivedTiming } from "@/lib/domain/pit";
 import { decodeCsv, parseTradesCsv, type ParsedTrade } from "@/lib/domain/trades";
 import { buildEpisodes, validateTrades, type MarketContext } from "@/lib/domain/position";
+import { planAt } from "@/lib/domain/plan";
 import {
   adjFactor,
   adjustedCostPath,
@@ -32,7 +33,7 @@ import type { FetchStatus, SourceError, SourceResult } from "@/lib/sources/types
 
 export const DEMO_WORKSPACE = "demo";
 /** 证据生成逻辑改了就加 1，旧缓存自动失效 */
-const EVIDENCE_VERSION = 3;
+const EVIDENCE_VERSION = 4;
 /** 不稳定的证据集（未平仓、观察窗口没结束、有数据源失败）缓存多久后重取 */
 const UNSTABLE_TTL_MS = 30 * 60_000;
 const MARKET_INDEX = { code: "000300.SH", name: "沪深300" };
@@ -60,7 +61,9 @@ export function loadTrades(workspace: string): Trade[] {
   }));
 }
 
-export function saveTrades(workspace: string, trades: ParsedTrade[]) {
+export function saveTrades(workspace: string, trades: ParsedTrade[], opts: { demo?: boolean } = {}) {
+  // 示例组合是所有访客共用的，只有 ensureDemo 能写
+  if (workspace === DEMO_WORKSPACE && !opts.demo) throw new Error("示例组合是只读的");
   const conn = db();
   conn.exec("BEGIN");
   try {
@@ -85,7 +88,7 @@ export function ensureDemo() {
   const n = db().prepare("SELECT COUNT(*) AS n FROM trades WHERE workspace = ?").get(DEMO_WORKSPACE) as { n: number };
   if (n.n > 0) return;
   const { text } = decodeCsv(readFileSync(join(process.cwd(), "demo", "demo-trades.csv")));
-  saveTrades(DEMO_WORKSPACE, parseTradesCsv(text).trades);
+  saveTrades(DEMO_WORKSPACE, parseTradesCsv(text).trades, { demo: true });
 }
 
 // ---------------- 数据源状态 ----------------
@@ -129,6 +132,7 @@ export async function analyzeWorkspace(workspace: string): Promise<WorkspaceAnal
 
   const ctx: MarketContext = { tradingDays: cal.data ? new Set(cal.data) : null, bars: new Map() };
   const actions = new Map<string, CorpAction[]>();
+  const actionsUnknown = new Set<string>();
   for (const code of codes) {
     const own = trades.filter((t) => t.code === code);
     const b = await fy.dailyBars(code, shDate(own[0].ts), shDate(own[own.length - 1].ts), "none");
@@ -137,11 +141,19 @@ export async function analyzeWorkspace(workspace: string): Promise<WorkspaceAnal
     const ca = await fy.corpActions(code);
     sources.push(statusOf(`actions:${code}`, `${code} 除权除息`, ca, false));
     if (ca.data) actions.set(code, ca.data);
+    else actionsUnknown.add(code);
   }
 
   const validation = validateTrades(trades, ctx);
-  const { episodes, issues } = buildEpisodes(trades, actions);
-  return { trades, episodes, issues: [...validation, ...issues], sources };
+  const { episodes, issues } = buildEpisodes(trades, actions, actionsUnknown);
+  // 除权除息没取到时，收益可能漏了分红送转，要明说，不能当成准确值展示
+  const actionIssues: Issue[] = [...actionsUnknown].map((code) => ({
+    severity: "warning",
+    code: "actions_unavailable",
+    field: "除权除息",
+    message: `${trades.find((t) => t.code === code)?.name ?? code} 的除权除息数据没取到，持仓期间如果有分红或送转，收益和持仓成本可能算错`,
+  }));
+  return { trades, episodes, issues: [...validation, ...issues, ...actionIssues], sources };
 }
 
 // ---------------- 单个持仓段的证据 ----------------
@@ -171,7 +183,9 @@ export async function buildEvidenceSet(workspace: string, episode: Episode, forc
     const row = db().prepare("SELECT json FROM evidence_sets WHERE episode_id = ?").get(key) as { json: string } | undefined;
     if (row) {
       const cachedSet = JSON.parse(row.json) as EvidenceSet;
-      if (cachedSet.version === EVIDENCE_VERSION && (cachedSet.stable || Date.now() - cachedSet.builtAt < UNSTABLE_TTL_MS)) return cachedSet;
+      // 持仓段本身变了（例如除权除息数据恢复后收益重算）也要重建，否则证据里还是旧收益
+      const sameEpisode = JSON.stringify(cachedSet.episode) === JSON.stringify(episode);
+      if (cachedSet.version === EVIDENCE_VERSION && sameEpisode && (cachedSet.stable || Date.now() - cachedSet.builtAt < UNSTABLE_TTL_MS)) return cachedSet;
     }
   }
 
@@ -196,6 +210,11 @@ export async function buildEvidenceSet(workspace: string, episode: Episode, forc
   sources.push(statusOf("adj", "个股日 K（前复权）", adj, true));
   sources.push(statusOf("index", `${MARKET_INDEX.name}日 K`, idx));
   sources.push(statusOf("calendar", "交易日历", cal));
+  sources.push(
+    episode.actionsMissing
+      ? { key: "actions", label: "除权除息", status: "failed", critical: false, error: { kind: "upstream", message: "除权除息数据没取到，收益里可能漏了分红送转" } }
+      : { key: "actions", label: "除权除息", status: "ok", critical: false },
+  );
   const series: Series = { raw: raw.data ?? [], adj: adj.data ?? [] };
   const days = cal.data ?? series.raw.map((b) => b.date);
   const prevTradingDay = (date: string, n = 1) => {
@@ -243,9 +262,11 @@ export async function buildEvidenceSet(workspace: string, episode: Episode, forc
       if (r3) items.push(r3);
       const drift = driftAfterSell(t, series, 10);
       if (drift) items.push(drift);
-      const planStop = episode.trades.find((x) => x.side === "buy" && x.planStop != null)?.planStop ?? null;
-      const planTarget = episode.trades.find((x) => x.side === "buy" && x.planTarget != null)?.planTarget ?? null;
-      const dd = drawdownBefore(episode, series, t.ts, planStop, planTarget);
+      // 只用这笔卖出之前已经写下的计划；之后加仓时才写的止损，不拿来评价这笔卖出
+      const plan = planAt(episode.trades, t.ts);
+      const planStop = plan.stop;
+      const planTarget = plan.target;
+      const dd = drawdownBefore(episode, series, t.ts, planStop, planTarget, { stop: plan.stopSince, target: plan.targetSince });
       // 计划在持有过程中有没有被违反：止损线被跌破后又拖了几个交易日、目标达到后有没有卖
       const lag = (from: string) => days.filter((d) => d > from && d <= shDate(t.ts)).length;
       if (dd?.stopBreach) {
@@ -411,14 +432,16 @@ export async function buildEvidenceSet(workspace: string, episode: Episode, forc
         .join("；"),
       value: episode.returnPct,
       unit: "%",
-      caliber: "个股为本持仓段实际收益（含分红送转、扣费）；指数为首次买入日到清仓日的收盘涨跌；行业用当前归属，非时点",
+      caliber: episode.actionsMissing
+        ? "个股为本持仓段实际收益（扣费；除权除息数据没取到，可能漏了分红送转）；指数为首次买入日到清仓日的收盘涨跌；行业用当前归属，非时点"
+        : "个股为本持仓段实际收益（含分红送转、扣费）；指数为首次买入日到清仓日的收盘涨跌；行业用当前归属，非时点",
       source: "程序计算",
       endpoint: "/api/a-share-index/prices/historical",
       inputs: [MARKET_INDEX.code, industry?.code ?? ""].filter(Boolean),
       eventTime: episode.closeTs,
       ...derivedTiming([lastBarTiming]),
       fetchedAt: null,
-      status: mk ? "ok" : "partial",
+      status: mk && !episode.actionsMissing ? "ok" : "partial",
     };
     items.push(decomp);
   }

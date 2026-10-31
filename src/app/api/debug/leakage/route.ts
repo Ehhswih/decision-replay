@@ -1,6 +1,6 @@
 import { connection } from "next/server";
 import { chatJson } from "@/lib/ai/deepseek";
-import { exAntePack, packText } from "@/lib/ai/pack";
+import { exAntePack, packText, realIds } from "@/lib/ai/pack";
 import { EX_ANTE_SYSTEM, exAnteUser } from "@/lib/ai/prompts";
 import { expostTerms } from "@/lib/ai/review";
 import { checkClaims, detectLeakage, type LogEntry } from "@/lib/ai/validate";
@@ -27,22 +27,23 @@ export async function GET(req: Request) {
   const name = er.episode.name ?? "";
 
   const run = async (anonymize: boolean) => {
-    const { pack, anon, decisionTime } = exAntePack(er.episode, set.items, t, anonymize);
+    const { pack, anon, decisionTime, forModel, real } = exAntePack(er.episode, set.items, t, anonymize);
     const identity = (s: string) => s;
     // 不匿名时去掉提示词里关于匿名化的那句，其余完全相同
     const system = anonymize
       ? EX_ANTE_SYSTEM
-      : EX_ANTE_SYSTEM.replace("股票名称已替换为\"标的A\"，日期已替换为相对决策日的天数（D-3 表示决策日之前 3 天）。不要猜测标的A是哪家公司，也", "");
+      : EX_ANTE_SYSTEM.replace("股票名称已替换为\"标的A\"，日期已替换为相对决策日的天数（D-3 表示决策日之前 3 天）。不要猜测标的A是哪家公司，也", "").replace(/\n年份写成.*$/, "");
     const r = await chatJson<Record<string, unknown>>(
       system,
-      exAnteUser({ decisionTime, reason: t.reason && anon ? anon.text(t.reason) : t.reason, plan: "", pack, negativeIds: [] }),
+      exAnteUser({ decisionTime, reason: t.reason && anon ? anon.text(t.reason) : t.reason, plan: "", pack: forModel, negativeIds: [] }),
     );
     if (!r.ok) return { error: r.message };
-    const raw = JSON.stringify(r.data);
+    const data = realIds(r.data, real) as Record<string, unknown>;
+    const raw = JSON.stringify(data);
     const log: LogEntry[] = [];
     const texts = new Map(pack.map((p) => [p.id, packText(p)]));
     const ctx = { evidence, exAnteAt: t.ts, log, stage: anonymize ? "匿名" : "不匿名", textOf: (e: { id: string; title: string }) => texts.get(e.id) ?? e.title };
-    const kept = [...checkClaims(r.data.supporting, ctx as never), ...checkClaims(r.data.warnings, ctx as never)];
+    const kept = [...checkClaims(data.supporting, ctx as never), ...checkClaims(data.warnings, ctx as never)];
     return {
       anonymized: anonymize,
       packSize: pack.length,
@@ -51,7 +52,7 @@ export async function GET(req: Request) {
       keptClaims: kept.length,
       droppedClaims: log.length,
       dropped: log,
-      summary: r.data.summary,
+      summary: data.summary,
     };
   };
 

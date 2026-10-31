@@ -10,7 +10,7 @@ import { rulesForWorkspace } from "@/lib/rules-review";
 import type { EvidenceSet } from "@/lib/pipeline";
 import { resolveB8 } from "./b8";
 import { chatJson } from "./deepseek";
-import { exAntePack, expostPack, packText, type PackItem } from "./pack";
+import { exAntePack, expostPack, packText, realIds, type PackItem } from "./pack";
 import { EX_ANTE_SYSTEM, EX_POST_SYSTEM, exAnteUser, exPostUser } from "./prompts";
 import { checkClaim, checkClaims, cleanText, detectLeakage, type Claim, type CheckContext, type LogEntry } from "./validate";
 
@@ -114,6 +114,13 @@ function ctxFor(pack: PackItem[], evidence: Map<string, Evidence>, log: LogEntry
   return { evidence, exAnteAt, log, stage, alwaysSources, packTexts: [...texts.values()], packIds: pack.map((p) => p.id), textOf: (e) => texts.get(e.id) ?? `${e.title} ${e.detail ?? ""} ${e.value ?? ""}` };
 }
 
+/** 模型返回的 JSON 结构不可信：该是列表的字段不是列表、列表里混着非对象，一律当成空的，不让整份复盘失败 */
+function list<T>(v: T[] | undefined): T[] {
+  return Array.isArray(v) ? (v.filter((x) => x != null && typeof x === "object") as T[]) : [];
+}
+const str = (v: unknown) => (typeof v === "string" ? v : "");
+const asObject = <T,>(v: unknown) => (v != null && typeof v === "object" && !Array.isArray(v) ? v : {}) as T;
+
 type ExAnteOut = { summary?: string; supporting?: unknown; warnings?: unknown; reason_check?: { claim?: string; status?: string; text?: string; evidence_ids?: string[] }[]; negatives_check?: { evidence_id?: string; addressed_in_reason?: boolean; relevant?: boolean; note?: string }[] };
 type ExPostOut = { narrative?: string; facts?: unknown; bias_notes?: { rule_id?: string; explanation?: string; alternative?: string }[]; failed_assumption?: { text?: string; evidence_ids?: string[] }; uncertainties?: unknown; lessons?: { text?: string; trigger?: string; evidence_ids?: string[] }[] };
 
@@ -142,11 +149,14 @@ export async function generateReview(
   const buys = ep.trades.filter((t) => t.side === "buy").slice(0, 3);
   for (const [i, t] of buys.entries()) {
     onStage(`生成当时视角 ${i + 1}/${buys.length}`);
-    const { pack, anon, decisionTime } = exAntePack(ep, set.items, t, true);
+    const { pack, anon, decisionTime, forModel, alias, real } = exAntePack(ep, set.items, t, true);
     // 规则列出的 B8 候选，让 AI 逐条核对，不自己挑
     const b8 = biases.find((b) => b.ruleId === "B8" && b.tradeId === t.id);
     const negativeIds = b8?.needsAi ? b8.evidenceIds.filter((id) => pack.some((p) => p.id === id)) : [];
-    const r = await chatJson<ExAnteOut>(EX_ANTE_SYSTEM, exAnteUser({ decisionTime, reason: t.reason ? anon!.text(t.reason) : null, plan: planText(t), pack, negativeIds }));
+    const r = await chatJson<ExAnteOut>(
+      EX_ANTE_SYSTEM,
+      exAnteUser({ decisionTime, reason: t.reason ? anon!.text(t.reason) : null, plan: planText(t), pack: forModel, negativeIds: negativeIds.map(alias) }),
+    );
     usage.calls++;
     usage.latencyMs += r.latencyMs;
     if (!r.ok) {
@@ -157,10 +167,12 @@ export async function generateReview(
     usage.prompt += r.usage.prompt;
     usage.completion += r.usage.completion;
     usage.reasoning += r.usage.reasoning;
+    // 模型看到的是临时编号，先换回真实证据 id
+    const data = asObject<ExAnteOut>(realIds(r.data, real));
     const self = pack.find((p) => p.id === `trade:${t.id}`);
     const ctx = ctxFor(pack, evidence, log, `当时视角 ${shDate(t.ts)}`, t.ts, self ? [packText(self)] : []);
     const restore = (c: Claim) => ({ ...c, text: anon!.restore(c.text) });
-    const rawText = JSON.stringify(r.data);
+    const rawText = JSON.stringify(data);
     const leakage = detectLeakage(rawText, expostTerms(set.items, t.ts, anon!.text), pack.map(packText).join(" "));
     for (const l of leakage) log.push({ stage: ctx.stage, text: l, reason: "疑似后见之明泄漏：输出里出现了决策之后才有的信息" });
     const inPack = new Set(pack.map((p) => p.id));
@@ -168,18 +180,18 @@ export async function generateReview(
       tradeId: t.id,
       decisionTs: t.ts,
       anonymized: true,
-      summary: anon!.restore(cleanText(r.data.summary, ctx)),
-      supporting: checkClaims(r.data.supporting, ctx).map(restore),
-      warnings: checkClaims(r.data.warnings, ctx).map(restore),
-      reasonCheck: (r.data.reason_check ?? [])
+      summary: anon!.restore(cleanText(data.summary, ctx)),
+      supporting: checkClaims(data.supporting, ctx).map(restore),
+      warnings: checkClaims(data.warnings, ctx).map(restore),
+      reasonCheck: list(data.reason_check)
         .map((x) => {
           const c = checkClaim({ text: x.text, evidence_ids: x.evidence_ids }, ctx);
           const status = x.status === "supported" || x.status === "contradicted" ? x.status : "unverifiable";
           if (!c && status !== "unverifiable") return null;
-          return { claim: anon!.restore(String(x.claim ?? "")), status, text: anon!.restore(c?.text ?? cleanText(x.text, ctx)), evidenceIds: c?.evidenceIds ?? [] } as ExAnteView["reasonCheck"][number];
+          return { claim: anon!.restore(str(x.claim)), status, text: anon!.restore(c?.text ?? cleanText(x.text, ctx)), evidenceIds: c?.evidenceIds ?? [] } as ExAnteView["reasonCheck"][number];
         })
         .filter((x): x is ExAnteView["reasonCheck"][number] => !!x),
-      negativesCheck: (r.data.negatives_check ?? [])
+      negativesCheck: list(data.negatives_check)
         .filter((x) => typeof x.evidence_id === "string" && inPack.has(x.evidence_id))
         .map((x) => ({ evidenceId: x.evidence_id as string, addressed: x.addressed_in_reason === true, relevant: x.relevant !== false, note: anon!.restore(cleanText(x.note, ctx)) })),
       leakage,
@@ -221,20 +233,22 @@ export async function generateReview(
     // 成交记录和程序算出的规则结果里的数字，模型可以直接引用
     const ctx = ctxFor(pack, evidence, log, "事后复盘", undefined, [...ep.trades.map((t) => `${t.price} ${t.qty}`), rulesText]);
     const hitIds = new Set(hits.map((b) => b.ruleId));
-    const fa = r.data.failed_assumption?.text?.trim() ? checkClaim({ text: r.data.failed_assumption.text, evidence_ids: r.data.failed_assumption.evidence_ids, type: "inference" }, ctx) : null;
+    const data = asObject<ExPostOut>(r.data);
+    const faRaw = asObject<NonNullable<ExPostOut["failed_assumption"]>>(data.failed_assumption);
+    const fa = str(faRaw.text).trim() ? checkClaim({ text: faRaw.text, evidence_ids: faRaw.evidence_ids, type: "inference" }, ctx) : null;
     expost = {
-      narrative: cleanText(r.data.narrative, ctx),
-      facts: checkClaims(r.data.facts, ctx),
-      biasNotes: (r.data.bias_notes ?? [])
+      narrative: cleanText(data.narrative, ctx),
+      facts: checkClaims(data.facts, ctx),
+      biasNotes: list(data.bias_notes)
         .filter((x) => typeof x.rule_id === "string" && hitIds.has(x.rule_id as BiasResult["ruleId"]))
         .map((x) => ({ ruleId: x.rule_id as string, explanation: cleanText(x.explanation, ctx), alternative: cleanText(x.alternative, ctx) })),
       failedAssumption: fa ? { ...fa, type: "inference" } : null,
-      uncertainties: checkClaims(r.data.uncertainties, ctx).map((c) => ({ ...c, type: "uncertain" as const })),
+      uncertainties: checkClaims(data.uncertainties, ctx).map((c) => ({ ...c, type: "uncertain" as const })),
     };
     // 通过校验的"被推翻的假设"才能把亏损归为看错了
     attribution = attribute(ep, set.items, biases, { failedAssumption: expost.failedAssumption });
     const triggers: LessonTrigger[] = ["chase", "hot", "panic", "anchor", "plan", "overtrade", "disposition", "attention", "other"];
-    lessons = (r.data.lessons ?? [])
+    lessons = list(data.lessons)
       .map((x): Lesson | null => {
         // 教训是下次的检查动作，里面的阈值是建议值，不要求在证据里出现
         const c = checkClaim({ text: x.text, evidence_ids: x.evidence_ids }, ctx, { checkNumbers: false });

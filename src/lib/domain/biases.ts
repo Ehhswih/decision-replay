@@ -1,8 +1,9 @@
 // 行为偏差规则（docs/design.md 第 5 节）。只用证据里程序算好的数字判定：
 // 规则命中是事实，"属于偏差"是推断；数据不够时输出"无法判定"，不能输出"未命中"。
 
-import { shDate } from "@/lib/time";
+import { addDays, shDate } from "@/lib/time";
 import { classify } from "./pit";
+import { planAt } from "./plan";
 import type { Evidence } from "./evidence";
 import type { Episode, EpisodeTrade } from "./types";
 
@@ -194,8 +195,8 @@ export function episodeBiases(ep: Episode, items: Evidence[], attentionGaps: str
   // B7 偏离计划：持有过程中的违规和最后的退出价分开看。
   // 跌破止损线后拖着不卖、到了目标又回吐，即使最后回本也算偏离；没发现偏离不等于证明执行到位
   const closing = sells.find((t) => t.positionAfter === 0);
-  const stop = buys.find((t) => t.planStop != null)?.planStop ?? null;
-  const target = buys.find((t) => t.planTarget != null)?.planTarget ?? null;
+  // 清仓时有效的计划（之前最近一次写下的止损和目标）
+  const { stop, target } = planAt(buys, closing?.ts ?? Infinity);
   if (stop == null && target == null) {
     out.push(
       result("B7", "episode", {
@@ -313,10 +314,23 @@ export function portfolioBiases(summaries: EpisodeSummary[]): BiasResult[] {
   // B5：同一只股票所有成交，看任意 10 个交易日窗口里的笔数
   const byCode = new Map<string, EpisodeSummary[]>();
   for (const s of summaries) byCode.set(s.episode.code, [...(byCode.get(s.episode.code) ?? []), s]);
+  const unknownCodes: string[] = [];
   for (const [code, list] of byCode) {
     const trades: EpisodeTrade[] = list.flatMap((s) => s.episode.trades).sort((a, b) => a.ts - b.ts);
     const days = [...new Set(list.flatMap((s) => s.tradingDays))].sort();
-    const dayIdx = (ts: number) => days.findIndex((d) => d >= shDate(ts));
+    // 交易日序列来自行情。行情缺失时序列盖不住成交日期，间隔算不出来，不能硬判。
+    // 只放过最后几天：盘中成交时当天的日 K 还没有
+    const daySet = new Set(days);
+    const lastDay = days[days.length - 1];
+    const covered = days.length > 0 && trades.every((t) => daySet.has(shDate(t.ts)) || (shDate(t.ts) > lastDay && shDate(t.ts) <= addDays(lastDay, 10)));
+    if (trades.length >= 3 && !covered) {
+      unknownCodes.push(list[0].episode.name ?? code);
+      continue;
+    }
+    const dayIdx = (ts: number) => {
+      const i = days.findIndex((d) => d >= shDate(ts));
+      return i === -1 ? days.length : i;
+    };
     let best: EpisodeTrade[] = [];
     for (let i = 0; i < trades.length; i++) {
       const win = trades.filter((t) => t.ts >= trades[i].ts && dayIdx(t.ts) - dayIdx(trades[i].ts) < 10);
@@ -336,7 +350,11 @@ export function portfolioBiases(summaries: EpisodeSummary[]): BiasResult[] {
     }
   }
   if (!out.some((r) => r.ruleId === "B5")) {
-    out.push(result("B5", "portfolio", { outcome: "not_hit", finding: "没有股票在 10 个交易日内买卖 3 次及以上", evidenceIds: [], confidence: "high" }));
+    out.push(
+      unknownCodes.length
+        ? result("B5", "portfolio", { outcome: "undetermined", finding: `${unknownCodes.join("、")} 缺少成交期间的交易日数据，算不出成交间隔，无法判定`, evidenceIds: [], confidence: "low" })
+        : result("B5", "portfolio", { outcome: "not_hit", finding: "没有股票在 10 个交易日内买卖 3 次及以上", evidenceIds: [], confidence: "high" }),
+    );
   }
   return out;
 }

@@ -295,7 +295,10 @@ export default function DecisionsPage() {
                   <span className="font-medium">
                     {r.episode.name ?? r.episode.code} <span className="text-xs text-muted-foreground num">{r.episode.code}</span>
                   </span>
-                  <span className={cn("figure text-lg font-semibold", pctClass(r.episode.returnPct))}>{pct(r.episode.returnPct)}</span>
+                  <span className={cn("figure text-lg font-semibold", pctClass(r.episode.returnPct))}>
+                    {pct(r.episode.returnPct)}
+                    {r.episode.actionsMissing && <span className="block text-[11px] font-normal text-expost">可能漏了分红送转</span>}
+                  </span>
                 </div>
                 <div className="text-xs text-muted-foreground num mt-1">
                   {fmtDate(r.episode.openTs)} 至 {r.episode.closeTs ? fmtDate(r.episode.closeTs) : "持有中"}
@@ -341,7 +344,10 @@ export default function DecisionsPage() {
                     {fmtDate(r.episode.openTs)} 至 {r.episode.closeTs ? fmtDate(r.episode.closeTs) : "持有中"}
                     {r.holdDays != null && <div className="text-xs">{r.holdDays} 个交易日</div>}
                   </td>
-                  <td className={cn("px-4 py-3.5 text-right figure text-[15px] font-semibold", pctClass(r.episode.returnPct))}>{pct(r.episode.returnPct)}</td>
+                  <td className={cn("px-4 py-3.5 text-right figure text-[15px] font-semibold", pctClass(r.episode.returnPct))}>
+                    {pct(r.episode.returnPct)}
+                    {r.episode.actionsMissing && <div className="text-[11px] font-normal text-expost whitespace-nowrap">可能漏了分红送转</div>}
+                  </td>
                   <td className="px-4 py-3.5 whitespace-nowrap">{quadrantText(r.attribution.quadrant)}</td>
                   <td className="px-4 py-3.5 whitespace-nowrap">
                     <Tag tone={r.attribution.errorType === "none" ? "ok" : r.attribution.errorType === "undetermined" ? "neutral" : "warn"}>{ERROR_TYPE_TEXT[r.attribution.errorType]}</Tag>

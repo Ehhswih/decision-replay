@@ -12,13 +12,11 @@ import type { DecisionNote } from "@/lib/records";
 const planText = (stop: number | null, target: number | null) => [stop != null ? `止损 ${stop}%` : "", target != null ? `目标 +${target}%` : ""].filter(Boolean).join("，");
 
 /** 决策前检查存下的记录。补充理由会新增版本，原来写的保留不动 */
-export function DecisionNotes({ notes, onChange }: { notes: DecisionNote[]; onChange: (notes: DecisionNote[]) => void }) {
+export function DecisionNotes({ notes, prejudgments = 0, onChange }: { notes: DecisionNote[]; prejudgments?: number; onChange: (notes: DecisionNote[]) => void }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [stop, setStop] = useState("");
   const [target, setTarget] = useState("");
-
-  if (!notes.length) return null;
 
   const startEdit = (n: DecisionNote) => {
     const last = n.versions[n.versions.length - 1];
@@ -47,6 +45,19 @@ export function DecisionNotes({ notes, onChange }: { notes: DecisionNote[]; onCh
     onChange([]);
     toast.success(`已删除 ${j.deleted} 条`);
   };
+
+  // 只在复盘页写过揭晓前的判断、没有决策记录时，也要能找到删除入口
+  if (!notes.length) {
+    if (!prejudgments) return null;
+    return (
+      <section className="panel p-4 text-sm flex flex-wrap items-center justify-between gap-2">
+        <span className="text-muted-foreground">你在复盘页写过 {prejudgments} 条揭晓前的判断。</span>
+        <Button variant="ghost" size="sm" className="text-destructive" onClick={purge}>
+          删除这些判断
+        </Button>
+      </section>
+    );
+  }
 
   return (
     <section className="panel p-5">

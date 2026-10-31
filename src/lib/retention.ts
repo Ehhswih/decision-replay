@@ -26,7 +26,7 @@ export function purgeWorkspace(workspace: string): number {
 /** 访客自己留下的判断和决策记录：和访客 cookie 一样保留 180 天 */
 export const RECORD_DAYS = 180;
 
-/** 清理超过保留期的导入数据、访客记录，以及 30 天前的调用日志 */
+/** 清理超过保留期的导入数据、访客记录，以及 30 天前的调用日志（iFinD 实际调用除外） */
 export function cleanupExpired(now = Date.now()) {
   const cutoff = now - RETENTION_DAYS * 86_400_000;
   const expired = db()
@@ -36,7 +36,10 @@ export function cleanupExpired(now = Date.now()) {
   const old = now - RECORD_DAYS * 86_400_000;
   db().prepare("DELETE FROM prejudgments WHERE created_at < ?").run(old);
   db().prepare("DELETE FROM decision_notes WHERE root_id IN (SELECT root_id FROM decision_notes GROUP BY root_id HAVING MAX(created_at) < ?)").run(old);
-  const calls = db().prepare("DELETE FROM call_log WHERE at < ?").run(now - 30 * 86_400_000).changes;
+  // iFinD 的实际调用记录不删：免费额度是累计总量，按这些记录计数（见 sources/cache.ts 的 ifindLiveCalls）
+  const calls = db()
+    .prepare("DELETE FROM call_log WHERE at < ? AND NOT (source = 'ifind' AND from_cache = 0 AND endpoint LIKE 'tools/call:%')")
+    .run(now - 30 * 86_400_000).changes;
   return { workspaces: expired.length, calls: Number(calls) };
 }
 

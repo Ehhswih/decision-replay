@@ -36,11 +36,15 @@ export default function PrecheckPage() {
   const [ran, setRan] = useState<{ side: "buy" | "sell"; reason: string; planStop: number | null; planTarget: number | null } | null>(null);
   const [saved, setSaved] = useState(false);
   const [notes, setNotes] = useState<DecisionNote[]>([]);
+  const [prejudgments, setPrejudgments] = useState(0);
 
   useEffect(() => {
     fetch("/api/notes")
       .then((r) => r.json())
-      .then((j) => setNotes(j.notes ?? []))
+      .then((j) => {
+        setNotes(j.notes ?? []);
+        setPrejudgments(j.prejudgments ?? 0);
+      })
       .catch(() => {});
   }, []);
 
@@ -248,7 +252,14 @@ export default function PrecheckPage() {
             </section>
           </>
         )}
-        <DecisionNotes notes={notes} onChange={setNotes} />
+        <DecisionNotes
+          notes={notes}
+          prejudgments={prejudgments}
+          onChange={(n) => {
+            setNotes(n);
+            if (!n.length) setPrejudgments(0);
+          }}
+        />
       </div>
     </div>
   );

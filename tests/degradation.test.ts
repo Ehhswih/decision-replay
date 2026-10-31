@@ -8,9 +8,11 @@ import { join } from "node:path";
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "dr-test-"));
 
-type Kind = "ok" | "failed" | "empty";
+type Kind = "ok" | "failed" | "empty" | "partial" | "dividend";
 const state: Record<string, Kind> = {};
-const llm: { mode: "ok" | "down" | "bad"; calls: number } = { mode: "ok", calls: 0 };
+const llm: { mode: "ok" | "down" | "bad" | "malformed"; calls: number; lastExAnte: string } = { mode: "ok", calls: 0, lastExAnte: "" };
+// 当时视角的证据包用临时编号（E1、E2……），按标题找到对应的编号
+const aliasOf = (user: string, title: RegExp) => [...user.matchAll(/"id":"([^"]+)","kind":"[^"]+","time":"[^"]*","title":"([^"]*)"/g)].find((m) => title.test(m[2]))?.[1];
 
 const meta = (endpoint: string) => ({ source: "fuyao" as const, endpoint, params: {}, fetchedAt: Date.now(), fromCache: false, latencyMs: 1, attempts: 1 });
 const fail = (endpoint: string, kind = "upstream", message = "上游服务超时") => ({ status: "failed" as const, data: null, error: { kind, code: 5002, message }, meta: meta(endpoint) });
@@ -33,13 +35,15 @@ vi.mock("@/lib/sources/fuyao-api", () => ({
   tradingDays: async (s: string, e: string) => (state.calendar === "failed" ? fail("calendar") : ok("calendar", DAYS.filter((d) => d >= s && d <= e))),
   dailyBars: async (_c: string, s: string, e: string) => (state.bars === "failed" ? fail("/api/a-share/prices/historical") : ok("bars", bars(s, e))),
   indexBars: async (_c: string, s: string, e: string) => (state.index === "failed" ? fail("index") : ok("index", bars(s, e))),
-  corpActions: async () => ok("actions", []),
+  corpActions: async () => (state.actions === "failed" ? fail("actions") : ok("actions", state.actions === "dividend" ? [{ exDate: "2026-07-01", cashPerShare: 1, bonusPerShare: 0 }] : [])),
   industryOf: async () => ok("industry", [{ code: "881273.TI", name: "测试行业" }]),
   incomeStatements: async () => ok("fin", []),
   stockNews: async () =>
     state.news === "failed"
       ? { status: "failed", data: [], complete: false, error: { kind: "network", message: "fetch failed" }, meta: meta("news") }
-      : {
+      : state.news === "partial"
+        ? { status: "ok", data: [], complete: false, meta: meta("news") }
+        : {
           status: "ok",
           complete: true,
           meta: meta("news"),
@@ -68,9 +72,15 @@ vi.mock("@/lib/ai/deepseek", () => ({
     llm.calls++;
     if (llm.mode === "down") return { ok: false, kind: "network", message: "connect ETIMEDOUT", latencyMs: 5 };
     const ids = [...user.matchAll(/"id":"([^"]+)"/g)].map((m) => m[1]);
-    const runup = ids.find((i) => i.startsWith("calc:runup5:"));
     const sell = ids.find((i) => i.startsWith("trade:") && user.includes("卖出"));
     if (system.includes("决策当时")) {
+      llm.lastExAnte = user;
+      const runupA = aliasOf(user, /^买入前 5 个交易日涨跌幅/);
+      const n1 = aliasOf(user, /监管问询函/) ?? "missing";
+      if (llm.mode === "malformed") {
+        // 结构错误：该是列表的给了对象、字符串、null
+        return { ok: true, model: "fake", latencyMs: 5, usage: { prompt: 1, completion: 1, reasoning: 0 }, data: { summary: 42, supporting: null, warnings: "x", reason_check: {}, negatives_check: [null, 1, { evidence_id: n1, addressed_in_reason: false }] } };
+      }
       return {
         ok: true,
         model: "fake",
@@ -84,12 +94,15 @@ vi.mock("@/lib/ai/deepseek", () => ({
                   { text: "股价平稳", evidence_ids: [] },
                   { text: "后来公司业绩预亏", evidence_ids: ["news:n2"] },
                 ],
-                warnings: [{ text: "收到监管问询函", evidence_ids: ["news:n1"] }],
+                warnings: [{ text: "收到监管问询函", evidence_ids: [n1] }],
                 reason_check: [],
-                negatives_check: [{ evidence_id: "news:n1", addressed_in_reason: false, relevant: true }],
+                negatives_check: [{ evidence_id: n1, addressed_in_reason: false, relevant: true }],
               }
-            : { summary: "买入前股价平稳。", supporting: runup ? [{ text: "买入前 5 日涨跌幅较小", evidence_ids: [runup] }] : [], warnings: [], reason_check: [], negatives_check: [] },
+            : { summary: "买入前股价平稳。", supporting: runupA ? [{ text: "买入前 5 日涨跌幅较小", evidence_ids: [runupA] }] : [], warnings: [], reason_check: [], negatives_check: [] },
       };
+    }
+    if (llm.mode === "malformed") {
+      return { ok: true, model: "fake", latencyMs: 5, usage: { prompt: 1, completion: 1, reasoning: 0 }, data: { narrative: ["x"], facts: {}, bias_notes: 5, failed_assumption: { text: 123 }, uncertainties: "y", lessons: { text: "z" } } };
     }
     return {
       ok: true,
@@ -202,6 +215,27 @@ describe("数据源故障", () => {
     expect(after.builtAt).toBeGreaterThan(first.builtAt);
   });
 
+  it("除权除息没取到：明确提示收益可能漏了分红，证据集不算稳定；恢复后按新收益重建，不留旧证据", async () => {
+    state.actions = "failed";
+    const { ws, a, ep } = await setup();
+    expect(ep.actionsMissing).toBe(true);
+    expect(a.issues.map((i) => i.code)).toContain("actions_unavailable");
+    const bad = await pipeline.buildEvidenceSet(ws, ep);
+    expect(bad.sources.find((s) => s.key === "actions")).toMatchObject({ status: "failed" });
+    expect(bad.stable).toBe(false);
+    expect(bad.items.find((e) => e.id.startsWith("calc:decomp:"))?.status).toBe("partial");
+
+    state.actions = "dividend";
+    const healed = (await pipeline.analyzeWorkspace(ws)).episodes[0];
+    expect(healed.actionsMissing).toBeUndefined();
+    expect(healed.dividends).toBe(1000);
+    expect(healed.returnPct!).toBeGreaterThan(ep.returnPct!);
+    const rebuilt = await pipeline.buildEvidenceSet(ws, healed);
+    expect(rebuilt.builtAt).toBeGreaterThan(bad.builtAt - 1);
+    expect(rebuilt.episode.returnPct).toBe(healed.returnPct);
+    expect(rebuilt.items.find((e) => e.id.startsWith("calc:decomp:"))?.value).toBe(healed.returnPct);
+  });
+
   it("交易日历失败：校验跳过交易日检查，但其余校验照常", async () => {
     state.calendar = "failed";
     const { a } = await setup();
@@ -238,6 +272,26 @@ describe("模型故障和输出校验", () => {
     expect(reasons).toContain("决策时不可知");
     expect(reasons).toContain("合规过滤");
     expect(reasons).toContain("88.88");
+  });
+
+  it("模型返回的 JSON 结构不对（该是列表的给了对象）：不让整份复盘失败，丢掉坏字段，教训用规则模板兜底", async () => {
+    const { ws, ep } = await setup();
+    llm.mode = "malformed";
+    const doc = await review.generateReview(ws, ep.id);
+    expect(doc.exAnte[0]).toMatchObject({ summary: "", supporting: [], warnings: [], reasonCheck: [] });
+    expect(doc.exAnte[0].negativesCheck.map((x) => x.evidenceId)).toEqual(["news:n1"]);
+    expect(doc.expost).toMatchObject({ narrative: "", facts: [], biasNotes: [], failedAssumption: null, uncertainties: [] });
+    expect(doc.lessons.length).toBeGreaterThan(0);
+    expect(doc.lessons.every((l) => l.source === "rule")).toBe(true);
+  });
+
+  it("当时视角发给模型的证据包里没有股票代码和年份：证据 id 换成临时编号，输出里的编号换回真实 id", async () => {
+    const { ws, ep } = await setup();
+    const doc = await review.generateReview(ws, ep.id);
+    const evidencePart = llm.lastExAnte.split("## 证据")[1].split("## 需要逐条核对")[0];
+    expect(evidencePart).not.toMatch(/600001|2026/);
+    expect([...evidencePart.matchAll(/"id":"([^"]+)"/g)].every((m) => /^E\d+$/.test(m[1]))).toBe(true);
+    expect(doc.exAnte[0].supporting[0]?.evidenceIds[0]).toMatch(/^calc:runup5:/);
   });
 
   it("B8：理由没提到当时可知、和逻辑相关的问询函（标题含“问询”算重要新闻），判命中，置信度低", async () => {
@@ -282,6 +336,18 @@ describe("决策前检查的降级", () => {
     expect(r.checks.find((c) => c.trigger === "panic")).toMatchObject({ status: "na" });
   });
 
+  it("新闻没翻完、已取到的部分没有负面信息：负面信息检查是无法判断，并写明缺口", async () => {
+    const { runPrecheck } = await import("@/lib/precheck");
+    const { ws } = await setup();
+    state.news = "partial";
+    const r = await runPrecheck(input, ws, null);
+    if ("error" in r) throw new Error(r.error);
+    const att = r.checks.find((c) => c.trigger === "attention")!;
+    expect(att.status).toBe("unknown");
+    expect(att.detail).toContain("没有翻完");
+    expect(r.sourceErrors.join("；")).toContain("没有翻完");
+  });
+
   it("数据都取到：有负面新闻时触发，热度两项都没命中时才是未触发", async () => {
     const { runPrecheck } = await import("@/lib/precheck");
     const { ws } = await setup();
@@ -293,6 +359,29 @@ describe("决策前检查的降级", () => {
 });
 
 describe("用户数据的保留和删除", () => {
+  it("示例组合不能被导入覆盖：伪造成 demo 的工作区 id 不认，直接写示例组合会被拒绝", async () => {
+    const { isVisitorWorkspace } = await import("@/lib/workspace");
+    const { randomUUID } = await import("node:crypto");
+    expect(isVisitorWorkspace("demo")).toBe(false);
+    expect(isVisitorWorkspace("demodemo")).toBe(false);
+    expect(isVisitorWorkspace(randomUUID())).toBe(true);
+    expect(() => pipeline.saveTrades("demo", trades.parseTradesCsv(CSV).trades)).toThrow("只读");
+  });
+
+  it("iFinD 的累计用量不会因为清理 30 天前的日志而减少", async () => {
+    const { cleanupExpired } = await import("@/lib/retention");
+    const { ifindLiveCalls } = await import("@/lib/sources/cache");
+    const { db } = await import("@/lib/db");
+    const old = Date.now() - 40 * 86_400_000;
+    const ins = db().prepare("INSERT INTO call_log (source, endpoint, params, status, code, message, latency_ms, from_cache, at) VALUES (?, ?, '{}', 'ok', NULL, NULL, 1, ?, ?)");
+    ins.run("ifind", "tools/call:search_notice", 0, old);
+    ins.run("fuyao", "/api/x", 0, old);
+    const before = ifindLiveCalls();
+    cleanupExpired();
+    expect(ifindLiveCalls()).toBe(before);
+    expect((db().prepare("SELECT COUNT(*) AS n FROM call_log WHERE source = 'fuyao' AND at = ?").get(old) as { n: number }).n).toBe(0);
+  });
+
   it("一键删除只删当前工作区；示例组合不能删", async () => {
     const { purgeWorkspace } = await import("@/lib/retention");
     const { ws } = await setup();

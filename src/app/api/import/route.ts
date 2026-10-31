@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { randomUUID } from "node:crypto";
 import { decodeCsv, parseTradesCsv } from "@/lib/domain/trades";
 import { saveTrades } from "@/lib/pipeline";
-import { WS_COOKIE } from "@/lib/workspace";
+import { isVisitorWorkspace, WS_COOKIE } from "@/lib/workspace";
 
 const MAX_BYTES = 512 * 1024;
 const MAX_ROWS = 500;
@@ -22,7 +22,9 @@ export async function POST(req: Request) {
   if (trades.length > MAX_ROWS) return Response.json({ ok: false, encoding, issues: [{ severity: "error", code: "too_many", message: `一次最多导入 ${MAX_ROWS} 笔成交` }] }, { status: 400 });
 
   const jar = await cookies();
-  const ws = jar.get(WS_COOKIE)?.value ?? randomUUID();
+  // 只沿用服务端发过的工作区 id；伪造成 "demo" 等值时另开一个，示例组合不会被覆盖
+  const prev = jar.get(WS_COOKIE)?.value;
+  const ws = isVisitorWorkspace(prev) ? prev : randomUUID();
   saveTrades(ws, trades);
   jar.set(WS_COOKIE, ws, { httpOnly: true, sameSite: "lax", maxAge: 60 * 60 * 24 * 30, path: "/" });
   return Response.json({ ok: true, encoding, imported: trades.length, issues });

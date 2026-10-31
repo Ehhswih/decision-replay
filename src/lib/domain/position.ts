@@ -109,6 +109,8 @@ function emptyEpisode(t: Trade): Episode {
 export function buildEpisodes(
   trades: Trade[],
   actions: Map<string, CorpAction[]>,
+  /** 除权除息没取到的代码：这些股票的持仓段收益可能漏了分红送转 */
+  actionsUnknown: Set<string> = new Set(),
 ): { episodes: Episode[]; issues: Issue[] } {
   const issues: Issue[] = [];
   const episodes: Episode[] = [];
@@ -174,12 +176,14 @@ export function buildEpisodes(
         current.closeTs = t.ts;
         current.realizedPnl = +(current.sellProceeds + current.dividends - current.buyCost).toFixed(2);
         current.returnPct = +((current.realizedPnl / current.buyCost) * 100).toFixed(2);
+        if (actionsUnknown.has(code)) current.actionsMissing = true;
         episodes.push(current);
         current = null;
       }
     }
     if (current) {
       applyActionsBefore(Date.now());
+      if (actionsUnknown.has(code)) current.actionsMissing = true;
       episodes.push(current);
     }
   }

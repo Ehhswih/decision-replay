@@ -175,7 +175,10 @@ export function driftAfterSell(t: EpisodeTrade, series: Series, n = 10): Evidenc
   };
 }
 
-/** 持仓期间的平均成本（前复权口径），随加仓更新 */
+/**
+ * 持仓期间的平均成本（前复权口径），随加减仓更新。
+ * 价格乘了复权因子，股数就要除以同一个因子（复权股数），否则送转后再加减仓，新旧股数口径不一致、成本算错
+ */
 export function adjustedCostPath(ep: Episode, series: Series) {
   let shares = 0;
   let cost = 0;
@@ -183,21 +186,32 @@ export function adjustedCostPath(ep: Episode, series: Series) {
   for (const t of ep.trades) {
     const f = adjFactor(series, shDate(t.ts));
     if (f == null) return null;
+    const q = t.qty / f;
     if (t.side === "buy") {
-      cost += t.price * f * t.qty;
-      shares += t.qty;
+      cost += t.price * t.qty;
+      shares += q;
     } else {
-      cost -= (cost / shares) * t.qty;
-      shares -= t.qty;
+      cost -= (cost / shares) * Math.min(q, shares);
+      shares -= Math.min(q, shares);
     }
-    if (shares > 0) path.push({ ts: t.ts, avgCost: cost / shares });
+    // 全部卖完后浮点误差可能留下极小的余数，不算持仓
+    if (shares > 1e-6) path.push({ ts: t.ts, avgCost: cost / shares });
   }
   return path;
 }
 
-/** 截至某个时刻之前（不含当天）持仓期间的最大浮亏和止损线首次被跌破的日期 */
-/** 截至某个时刻之前（不含当天）：持仓期间的最大浮亏、止损线首次被跌破、目标首次达到（都按收盘价） */
-export function drawdownBefore(ep: Episode, series: Series, untilTs: number, stopPct: number | null, targetPct: number | null = null) {
+/**
+ * 截至某个时刻之前（不含当天）：持仓期间的最大浮亏、止损线首次被跌破、目标首次达到（都按收盘价）。
+ * 买入当天的收盘也算（盘中买入、收盘时已经持有）。止损和目标只从写下它们的那笔买入之后开始核对
+ */
+export function drawdownBefore(
+  ep: Episode,
+  series: Series,
+  untilTs: number,
+  stopPct: number | null,
+  targetPct: number | null = null,
+  since: { stop?: number | null; target?: number | null } = {},
+) {
   const path = adjustedCostPath(ep, series);
   if (!path?.length) return null;
   const untilDate = shDate(untilTs);
@@ -205,14 +219,14 @@ export function drawdownBefore(ep: Episode, series: Series, untilTs: number, sto
   let stopBreach: { date: string; close: number; line: number } | null = null;
   let targetHit: { date: string; close: number; line: number } | null = null;
   for (const b of series.adj) {
-    if (b.date <= shDate(ep.openTs) || b.date >= untilDate) continue;
+    if (b.date < shDate(ep.openTs) || b.date >= untilDate) continue;
     const ts = barTiming(b.date).availableAt as number;
     const cur = [...path].reverse().find((p) => p.ts <= ts);
     if (!cur) continue;
     const pct = (b.close / cur.avgCost - 1) * 100;
     if (!worst || pct < worst.pct) worst = { pct, date: b.date };
-    if (stopPct != null && !stopBreach && pct <= -stopPct) stopBreach = { date: b.date, close: b.close, line: cur.avgCost * (1 - stopPct / 100) };
-    if (targetPct != null && !targetHit && pct >= targetPct) targetHit = { date: b.date, close: b.close, line: cur.avgCost * (1 + targetPct / 100) };
+    if (stopPct != null && !stopBreach && ts >= (since.stop ?? 0) && pct <= -stopPct) stopBreach = { date: b.date, close: b.close, line: cur.avgCost * (1 - stopPct / 100) };
+    if (targetPct != null && !targetHit && ts >= (since.target ?? 0) && pct >= targetPct) targetHit = { date: b.date, close: b.close, line: cur.avgCost * (1 + targetPct / 100) };
   }
   return { worst, stopBreach, targetHit, lastCost: path[path.length - 1].avgCost };
 }

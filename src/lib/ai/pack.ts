@@ -1,5 +1,5 @@
 // 给模型的证据包。当时视角只放决策时可知的证据，并做匿名化（股票名、代码换成"标的A"，
-// 日期换成相对决策日的 D-n），不让模型凭训练数据里的记忆知道后来发生了什么。
+// 日期换成相对决策日的 D-n，年份换成 Y-n，证据 id 换成临时编号），不让模型凭训练数据里的记忆知道后来发生了什么。
 
 import { DAY_MS, atShTime, shDate } from "@/lib/time";
 import { classify, TIMING_LABEL } from "@/lib/domain/pit";
@@ -24,7 +24,7 @@ const GENERIC = new Set(["中国", "东方", "时代", "科技", "股份", "集�
 
 export interface Anonymizer {
   text: (s: string) => string;
-  /** 把模型输出里的"标的A"换回真实名称，方便用户阅读 */
+  /** 把模型输出里的"标的A"、Y-n 年换回真实名称和年份，方便用户阅读 */
   restore: (s: string) => string;
 }
 
@@ -45,9 +45,17 @@ export function makeAnonymizer(name: string | null, code: string, decisionDate: 
       out = out.replace(/(20\d{2})-(\d{2})-(\d{2})/g, (_, y, m, d) => rel(`${y}-${m}-${d}`));
       out = out.replace(/(20\d{2})年(\d{1,2})月(\d{1,2})日/g, (_, y, m, d) => rel(`${y}-${pad(m)}-${pad(d)}`));
       out = out.replace(/(?<!\d)(\d{1,2})月(\d{1,2})日/g, (_, m, d) => rel(`${year}-${pad(m)}-${pad(d)}`));
+      // 只写年份的（"2026 年一季报披露"）也会透露时间，换成相对决策当年的 Y、Y-1
+      out = out.replace(/(?<!\d)(20\d{2}) ?年/g, (_, y) => {
+        const d = +y - +year;
+        return d === 0 ? "Y 年" : `Y${d > 0 ? "+" : ""}${d} 年`;
+      });
       return out;
     },
-    restore: (s: string) => (name ? s.split("标的A").join(name) : s),
+    restore: (s: string) => {
+      const out = s.replace(/Y([+-]\d+)? ?年/g, (_, d) => `${+year + (d ? +d : 0)} 年`);
+      return name ? out.split("标的A").join(name) : out;
+    },
   };
 }
 
@@ -97,7 +105,34 @@ export function exAntePack(ep: Episode, items: Evidence[], decision: EpisodeTrad
   ];
   const timeOf = (e: Evidence) => (e.availableAt == null ? "时间未知" : anon ? anon.text(shDate(e.availableAt)) : shDate(e.availableAt));
   const pack = dedupe(chosen).map((e) => item(e, timeOf(e), anon));
-  return { pack, anon, decisionTime: anon ? "D" : date };
+  return { pack, anon, decisionTime: anon ? "D" : date, ...aliasIds(pack, !!anon) };
+}
+
+/**
+ * 证据 id 里带着代码和年份（例如 fin:603986.SH:2026Q1、corp:300750.SZ:2026-06-12），
+ * 匿名化时给模型看 E1、E2 这样的临时编号，模型输出里的编号再换回真实 id。
+ */
+function aliasIds(pack: PackItem[], on: boolean) {
+  const toAlias = new Map(pack.map((p, i) => [p.id, on ? `E${i + 1}` : p.id]));
+  const toReal = new Map([...toAlias].map(([r, a]) => [a, r]));
+  return {
+    /** 发给模型的证据包 */
+    forModel: pack.map((p) => ({ ...p, id: toAlias.get(p.id) as string })),
+    alias: (id: string) => toAlias.get(id) ?? id,
+    real: (id: string) => toReal.get(id.trim().toUpperCase()) ?? toReal.get(id.trim()) ?? id,
+  };
+}
+
+/** 把模型输出里 evidence_id / evidence_ids 字段的临时编号换回真实 id，其他内容不动 */
+export function realIds(v: unknown, real: (id: string) => string): unknown {
+  if (Array.isArray(v)) return v.map((x) => realIds(x, real));
+  if (v == null || typeof v !== "object") return v;
+  return Object.fromEntries(
+    Object.entries(v).map(([k, x]) => [
+      k,
+      k === "evidence_id" && typeof x === "string" ? real(x) : k === "evidence_ids" && Array.isArray(x) ? x.map((y) => (typeof y === "string" ? real(y) : y)) : realIds(x, real),
+    ]),
+  );
 }
 
 /** 事后复盘：整个持仓段，带每条证据相对首次买入的时点标签 */

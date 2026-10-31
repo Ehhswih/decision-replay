@@ -22,8 +22,8 @@ export function ExAntePanel({
   aiState,
 }: {
   trade: EpisodeTrade;
-  /** 买入时写的止损和目标（卖出决策要对照它） */
-  plan: EpisodeTrade | null;
+  /** 这笔卖出之前已经写下的止损和目标（卖出决策要对照它） */
+  plan: Pick<EpisodeTrade, "planStop" | "planTarget"> | null;
   view: ExAnteView | undefined;
   biases: BiasResult[];
   evidence: Map<string, Evidence>;
@@ -47,7 +47,7 @@ export function ExAntePanel({
         <dl className="grid sm:grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5 text-sm">
           <dt className="text-muted-foreground">当时理由</dt>
           <dd>{trade.reason ?? <span className="text-muted-foreground">没有记录</span>}</dd>
-          <dt className="text-muted-foreground">{isSell ? "买入时的计划" : "计划"}</dt>
+          <dt className="text-muted-foreground">{isSell ? "卖出前的计划" : "计划"}</dt>
           <dd>{planText || <span className="text-muted-foreground">没有写止损或目标</span>}</dd>
           {!trade.timeKnown && (
             <>

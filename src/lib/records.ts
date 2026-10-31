@@ -76,7 +76,12 @@ type NoteRow = {
 };
 
 export function listNotes(visitor: string): DecisionNote[] {
-  const rows = db().prepare("SELECT * FROM decision_notes WHERE visitor = ? ORDER BY created_at DESC LIMIT 500").all(visitor) as NoteRow[];
+  // 先挑最近有改动的记录，再取这些记录的全部版本；直接截取最近的版本会丢掉老记录的第一版（原始理由和检查快照）
+  const rows = db()
+    .prepare(
+      "SELECT * FROM decision_notes WHERE visitor = ? AND root_id IN (SELECT root_id FROM decision_notes WHERE visitor = ? GROUP BY root_id ORDER BY MAX(created_at) DESC LIMIT 200) ORDER BY created_at DESC",
+    )
+    .all(visitor, visitor) as NoteRow[];
   const byRoot = new Map<string, DecisionNote>();
   for (const r of [...rows].reverse()) {
     let n = byRoot.get(r.root_id);
@@ -89,6 +94,11 @@ export function listNotes(visitor: string): DecisionNote[] {
   }
   // 最近有改动的排在前面
   return [...byRoot.values()].sort((a, b) => b.versions[b.versions.length - 1].createdAt - a.versions[a.versions.length - 1].createdAt);
+}
+
+/** 揭晓前写下的判断条数：没有决策记录时，删除入口也要能找到 */
+export function countPrejudgments(visitor: string): number {
+  return (db().prepare("SELECT COUNT(*) AS c FROM prejudgments WHERE visitor = ?").get(visitor) as { c: number }).c;
 }
 
 const MAX_NOTES = 200;
