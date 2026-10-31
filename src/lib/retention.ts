@@ -14,6 +14,7 @@ export function purgeWorkspace(workspace: string): number {
     const n = conn.prepare("DELETE FROM trades WHERE workspace = ?").run(workspace).changes;
     conn.prepare("DELETE FROM evidence_sets WHERE workspace = ?").run(workspace);
     conn.prepare("DELETE FROM reviews WHERE workspace = ?").run(workspace);
+    conn.prepare("DELETE FROM prejudgments WHERE workspace = ?").run(workspace);
     conn.exec("COMMIT");
     return Number(n);
   } catch (e) {
@@ -22,13 +23,19 @@ export function purgeWorkspace(workspace: string): number {
   }
 }
 
-/** 清理超过保留期的导入数据，以及 30 天前的调用日志 */
+/** 访客自己留下的判断和决策记录：和访客 cookie 一样保留 180 天 */
+export const RECORD_DAYS = 180;
+
+/** 清理超过保留期的导入数据、访客记录，以及 30 天前的调用日志 */
 export function cleanupExpired(now = Date.now()) {
   const cutoff = now - RETENTION_DAYS * 86_400_000;
   const expired = db()
     .prepare("SELECT workspace FROM trades WHERE workspace != ? GROUP BY workspace HAVING MAX(COALESCE(imported_at, 0)) < ?")
     .all(DEMO, cutoff) as { workspace: string }[];
   for (const w of expired) purgeWorkspace(w.workspace);
+  const old = now - RECORD_DAYS * 86_400_000;
+  db().prepare("DELETE FROM prejudgments WHERE created_at < ?").run(old);
+  db().prepare("DELETE FROM decision_notes WHERE root_id IN (SELECT root_id FROM decision_notes GROUP BY root_id HAVING MAX(created_at) < ?)").run(old);
   const calls = db().prepare("DELETE FROM call_log WHERE at < ?").run(now - 30 * 86_400_000).changes;
   return { workspaces: expired.length, calls: Number(calls) };
 }

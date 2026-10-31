@@ -99,6 +99,16 @@ await check("规则：兆易创新命中追涨和偏离计划，归类为没做�
   assert(e.attribution.errorType === "execution", e.attribution.errorType);
 });
 
+await check("规则：偏离计划单独核对持有过程；\"看错了\"必须有被推翻的假设和证据", async () => {
+  const b7 = zy().biases.find((b) => b.ruleId === "B7");
+  assert(/被跌破后/.test(b7.finding), `兆易创新的偏离计划应指出跌破止损线后拖延：${b7.finding}`);
+  for (const e of episodes.filter((x) => x.attribution.errorType === "judgment")) {
+    assert(e.attribution.errorReason.evidenceIds.length > 0 && e.attribution.errorReason.text.startsWith("买入理由里的假设被证据否定"), `${e.episode.name} 归为看错了但没有给出被推翻的假设`);
+  }
+  const n = (t) => episodes.filter((x) => x.attribution.errorType === t).length;
+  return `看错了 ${n("judgment")}、暂无法归类 ${n("undetermined")}、可能受事后事件影响 ${n("unforeseeable")}`;
+});
+
 await check("复盘：当时视角匿名生成、输出经过校验、不含建议和预测", async () => {
   const r = await req(`/api/episodes/${encodeURIComponent(zy().episode.id)}/review`);
   if (r.json?.status !== "done") return "示例复盘还没生成，跳过";
@@ -147,6 +157,37 @@ await check("决策前检查：按名称识别股票，返回检查结果和事�
   assert(r.json.checks.length > 0 && r.json.facts.length > 0, "缺少检查结果或事实");
   assert(r.json.adviceNotice === null, "普通理由不应弹出合规提示");
   assert(r.json.checks.find((c) => c.trigger === "plan")?.status === "clear", "写了止损时计划检查应通过");
+});
+
+await check("揭晓前的判断：每笔只能写一次，写下后不能修改", async () => {
+  const e = zy();
+  const id = encodeURIComponent(e.episode.id);
+  const body = (verdict) => JSON.stringify({ tradeId: e.episode.trades[0].id, verdict, worry: "冒烟测试" });
+  const bad = await req(`/api/episodes/${id}/prejudgment`, { method: "POST", headers: { "Content-Type": "application/json" }, body: body("maybe") });
+  assert(bad.status === 400, `非法选项应拒绝，实际 HTTP ${bad.status}`);
+  const first = await req(`/api/episodes/${id}/prejudgment`, { method: "POST", headers: { "Content-Type": "application/json" }, body: body("gaps") });
+  assert(first.status === 200 && first.json.items.length === 1, `保存失败 HTTP ${first.status}`);
+  const again = await req(`/api/episodes/${id}/prejudgment`, { method: "POST", headers: { "Content-Type": "application/json" }, body: body("sufficient") });
+  assert(again.status === 409, `第二次写应拒绝，实际 HTTP ${again.status}`);
+  const g = await req(`/api/episodes/${id}/prejudgment`);
+  assert(g.json.items[0].verdict === "gaps", "原来的判断被改了");
+});
+
+await check("决策记录：保存、补充理由时保留原版本、一键删除", async () => {
+  const add = await req("/api/notes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code: "300750", name: "宁德时代", side: "buy", reason: "冒烟测试理由", planStop: 8, planTarget: null, snapshot: { asOf: "2026-10-30", checks: [{ text: "下单前写好止损和目标", status: "clear", detail: "止损 8%" }], facts: [], sourceErrors: [] } }),
+  });
+  assert(add.status === 200 && add.json.id, `保存失败 HTTP ${add.status} ${add.text.slice(0, 100)}`);
+  const v2 = await req(`/api/notes/${add.json.id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: "冒烟测试理由（补充）", planStop: 6 }) });
+  assert(v2.json.version === 2, `补充失败 ${v2.text.slice(0, 100)}`);
+  const note = v2.json.notes.find((n) => n.rootId === add.json.id);
+  assert(note.versions[0].reason === "冒烟测试理由" && note.versions[1].reason === "冒烟测试理由（补充）", "原版本没有保留");
+  const del = await req("/api/notes", { method: "DELETE" });
+  assert(del.json.deleted >= 3, `应删除 2 个版本和 1 条判断，实际 ${del.json.deleted}`);
+  const after = await req("/api/notes");
+  assert(after.json.notes.length === 0, "删除后还有记录");
 });
 
 // ---------- 合规边界 ----------

@@ -38,7 +38,7 @@ export function KlineChart({
   trades,
   events,
   decisionDate,
-  curtain,
+  cutoffTs,
   onEventClick,
 }: {
   raw: Bar[];
@@ -46,12 +46,14 @@ export function KlineChart({
   trades: ChartTrade[];
   events: ChartEvent[];
   decisionDate: string;
-  curtain: boolean;
+  /** 回到当时：决策时刻。只画这一刻之前已经收盘的 K 线；为 null 时显示完整行情 */
+  cutoffTs: number | null;
   onEventClick?: (id: string) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<echarts.ECharts | null>(null);
   const [cover, setCover] = useState<{ left: number; width: number } | null>(null);
+  const then = cutoffTs != null;
 
   useEffect(() => {
     if (!box.current) return;
@@ -67,11 +69,18 @@ export function KlineChart({
   useEffect(() => {
     const c = chart.current;
     if (!c || !adj.length) return;
-    const dates = adj.map((b) => b.date);
-    const factor = new Map(adj.map((b) => [b.date, raw.find((r) => r.date === b.date)?.close ? b.close / (raw.find((r) => r.date === b.date) as Bar).close : 1]));
-    const highOf = new Map(adj.map((b) => [b.date, b.high]));
-    const lowOf = new Map(adj.map((b) => [b.date, b.low]));
-    const top = Math.max(...adj.map((b) => b.high));
+    // 当时视角用不复权价格：前复权会用到决策之后的除权信息
+    const bars = then ? raw : adj;
+    const dates = bars.map((b) => b.date);
+    // 第 D 日的 K 线在 D 日 15:00 收盘后才完整；盘中决策时当天那根也不画
+    const visible = (date: string) => !then || Date.parse(`${date}T15:00:00+08:00`) <= (cutoffTs as number);
+    const shown = bars.filter((b) => visible(b.date));
+    const rawClose = new Map(raw.map((b) => [b.date, b.close]));
+    const factor = new Map(adj.map((b) => [b.date, rawClose.get(b.date) ? b.close / (rawClose.get(b.date) as number) : 1]));
+    const priceOf = (t: ChartTrade) => (then ? t.price : t.price * (factor.get(t.date) ?? 1));
+    const visTrades = trades.filter((t) => dates.includes(t.date));
+    const lastHigh = shown.length ? shown[shown.length - 1].high : Math.max(0, ...visTrades.map(priceOf));
+    const highOf = (date: string) => shown.find((b) => b.date === date)?.high ?? lastHigh;
 
     // 同一天多个事件往上错开
     const stack = new Map<string, number>();
@@ -80,8 +89,13 @@ export function KlineChart({
       .map((e) => {
         const n = stack.get(e.date) ?? 0;
         stack.set(e.date, n + 1);
-        return { value: [e.date, (highOf.get(e.date) as number) * (1.035 + n * 0.03)], id: e.id, title: e.title, kindLabel: e.kindLabel, tone: e.tone };
+        return { value: [e.date, highOf(e.date) * (1.035 + n * 0.03)] as [string, number], id: e.id, title: e.title, kindLabel: e.kindLabel, tone: e.tone };
       });
+
+    // 纵轴只按当时可见的数据定范围，不让后来的高低点透出来
+    const ys = [...shown.flatMap((b) => [b.low, b.high]), ...visTrades.map(priceOf), ...eventPoints.map((p) => p.value[1])];
+    const yMax = ys.length ? Math.max(...ys) * 1.03 : undefined;
+    const yMin = ys.length ? Math.min(...ys) * 0.95 : undefined;
 
     c.setOption(
       {
@@ -97,8 +111,8 @@ export function KlineChart({
           formatter: (p: { seriesType: string; data: unknown; name: string }) => {
             if (p.seriesType === "candlestick") {
               const d = p.data as number[];
-              const r = raw.find((b) => b.date === p.name);
-              return `${p.name}<br/>开 ${d[1].toFixed(2)} 收 ${d[2].toFixed(2)}<br/>低 ${d[3].toFixed(2)} 高 ${d[4].toFixed(2)}<br/><span style="color:${MUTED}">前复权${r ? `；不复权收盘 ${r.close}` : ""}</span>`;
+              const note = then ? "不复权" : `前复权${rawClose.get(p.name) ? `；不复权收盘 ${rawClose.get(p.name)}` : ""}`;
+              return `${p.name}<br/>开 ${d[1].toFixed(2)} 收 ${d[2].toFixed(2)}<br/>低 ${d[3].toFixed(2)} 高 ${d[4].toFixed(2)}<br/><span style="color:${MUTED}">${note}</span>`;
             }
             const d = p.data as { title: string; kindLabel?: string; value: [string, number] };
             return `${d.value[0]}${d.kindLabel ? ` · ${d.kindLabel}` : ""}<br/>${d.title}`;
@@ -113,16 +127,17 @@ export function KlineChart({
         },
         yAxis: {
           scale: true,
-          max: Math.ceil(top * (1.06 + Math.max(0, ...stack.values()) * 0.03)),
+          min: yMin,
+          max: yMax,
           splitLine: { lineStyle: { color: "#e9ebe6" } },
-          axisLabel: { color: MUTED, fontSize: 11, showMaxLabel: false },
+          axisLabel: { color: MUTED, fontSize: 11, showMaxLabel: false, showMinLabel: false, formatter: (v: number) => String(Math.round(v * 100) / 100) },
         },
-        dataZoom: [{ type: "inside" }, { type: "slider", height: 18, bottom: 8, borderColor: "#dcdfd8", textStyle: { color: MUTED, fontSize: 10 } }],
+        dataZoom: [{ type: "inside" }, { type: "slider", height: 18, bottom: 8, showDataShadow: false, borderColor: "#dcdfd8", textStyle: { color: MUTED, fontSize: 10 } }],
         series: [
           {
             type: "candlestick",
             name: "K线",
-            data: adj.map((b) => [b.open, b.close, b.low, b.high]),
+            data: bars.map((b) => (visible(b.date) ? [b.open, b.close, b.low, b.high] : "-")),
             itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN },
             markLine: {
               symbol: "none",
@@ -138,17 +153,15 @@ export function KlineChart({
             symbol: "path://M0,10 L5,0 L10,10 Z",
             symbolSize: 12,
             z: 5,
-            data: trades
-              .filter((t) => dates.includes(t.date))
-              .map((t) => ({
-                value: [t.date, t.side === "buy" ? (lowOf.get(t.date) as number) * 0.975 : (highOf.get(t.date) as number) * 1.0],
-                title: t.label,
-                kindLabel: t.side === "buy" ? "买入" : "卖出",
-                symbolRotate: t.side === "buy" ? 0 : 180,
-                itemStyle: { color: t.side === "buy" ? UP : DOWN },
-                label: { show: true, formatter: t.side === "buy" ? "买" : "卖", position: t.side === "buy" ? "bottom" : "top", color: t.side === "buy" ? UP : DOWN, fontSize: 11 },
-                _adjPrice: t.price * (factor.get(t.date) ?? 1),
-              })),
+            // 标记按成交价定位（当时已知），不用当天的最高最低价
+            data: visTrades.map((t) => ({
+              value: [t.date, t.side === "buy" ? priceOf(t) * 0.97 : priceOf(t) * 1.03],
+              title: t.label,
+              kindLabel: t.side === "buy" ? "买入" : "卖出",
+              symbolRotate: t.side === "buy" ? 0 : 180,
+              itemStyle: { color: t.side === "buy" ? UP : DOWN },
+              label: { show: true, formatter: t.side === "buy" ? "买" : "卖", position: t.side === "buy" ? "bottom" : "top", color: t.side === "buy" ? UP : DOWN, fontSize: 11 },
+            })),
           },
           {
             type: "scatter",
@@ -173,11 +186,12 @@ export function KlineChart({
     });
 
     const place = () => {
-      const idx = dates.findIndex((d) => d > decisionDate);
-      if (!curtain || idx === -1) return setCover(null);
+      // 幕布从第一根还没收盘的 K 线开始（盘中决策时包括当天）
+      const idx = dates.findIndex((d) => !visible(d));
+      if (!then || idx === -1) return setCover(null);
       const x = c.convertToPixel({ xAxisIndex: 0 }, idx) as number;
-      const prev = c.convertToPixel({ xAxisIndex: 0 }, Math.max(0, idx - 1)) as number;
-      const left = (x + prev) / 2;
+      const prev = idx > 0 ? (c.convertToPixel({ xAxisIndex: 0 }, idx - 1) as number) : x;
+      const left = Math.max(GRID.left, (x + prev) / 2);
       const right = c.getWidth() - GRID.right;
       setCover(left < right ? { left, width: right - left } : null);
     };
@@ -186,7 +200,7 @@ export function KlineChart({
     c.on("datazoom", place);
     c.off("finished");
     c.on("finished", place);
-  }, [raw, adj, trades, events, decisionDate, curtain, onEventClick]);
+  }, [raw, adj, trades, events, decisionDate, cutoffTs, then, onEventClick]);
 
   return (
     <div className="relative">

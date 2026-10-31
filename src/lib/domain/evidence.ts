@@ -196,12 +196,14 @@ export function adjustedCostPath(ep: Episode, series: Series) {
 }
 
 /** 截至某个时刻之前（不含当天）持仓期间的最大浮亏和止损线首次被跌破的日期 */
-export function drawdownBefore(ep: Episode, series: Series, untilTs: number, stopPct: number | null) {
+/** 截至某个时刻之前（不含当天）：持仓期间的最大浮亏、止损线首次被跌破、目标首次达到（都按收盘价） */
+export function drawdownBefore(ep: Episode, series: Series, untilTs: number, stopPct: number | null, targetPct: number | null = null) {
   const path = adjustedCostPath(ep, series);
   if (!path?.length) return null;
   const untilDate = shDate(untilTs);
   let worst: { pct: number; date: string } | null = null;
   let stopBreach: { date: string; close: number; line: number } | null = null;
+  let targetHit: { date: string; close: number; line: number } | null = null;
   for (const b of series.adj) {
     if (b.date <= shDate(ep.openTs) || b.date >= untilDate) continue;
     const ts = barTiming(b.date).availableAt as number;
@@ -210,8 +212,9 @@ export function drawdownBefore(ep: Episode, series: Series, untilTs: number, sto
     const pct = (b.close / cur.avgCost - 1) * 100;
     if (!worst || pct < worst.pct) worst = { pct, date: b.date };
     if (stopPct != null && !stopBreach && pct <= -stopPct) stopBreach = { date: b.date, close: b.close, line: cur.avgCost * (1 - stopPct / 100) };
+    if (targetPct != null && !targetHit && pct >= targetPct) targetHit = { date: b.date, close: b.close, line: cur.avgCost * (1 + targetPct / 100) };
   }
-  return { worst, stopBreach, lastCost: path[path.length - 1].avgCost };
+  return { worst, stopBreach, targetHit, lastCost: path[path.length - 1].avgCost };
 }
 
 const PERIOD_LABEL: Record<string, string> = { Q1: "一季报", Q2: "半年报", Q3: "三季报", Q4: "年报", FY: "年报" };

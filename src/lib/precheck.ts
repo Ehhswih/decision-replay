@@ -31,7 +31,8 @@ export interface CheckResult {
   id: string;
   text: string;
   trigger: LessonTrigger;
-  status: "triggered" | "clear" | "manual" | "unknown";
+  /** clear 只在数据取全、确实没命中时给出；数据源失败时是 unknown，不适用时是 na */
+  status: "triggered" | "clear" | "manual" | "unknown" | "na";
   detail: string;
   factIds: string[];
   fromChecklist: boolean;
@@ -111,9 +112,17 @@ export async function runPrecheck(input: PrecheckInput, workspace: string, visit
   const lhbDates = days.filter((x) => x < today).slice(-3);
   const lhb = await Promise.all(lhbDates.map((d) => fy.dragonTiger(d)));
   const lhbHits = lhbDates.filter((d, i) => lhb[i].data?.some((x) => x.code === code));
+  // 交易日历或任何一天的龙虎榜没取到，都不能说"没上龙虎榜"
+  const lhbFailedDates = lhbDates.filter((_, i) => lhb[i].status === "failed");
+  const lhbFailed = cal.status === "failed" || lhbDates.length < 3 || lhbFailedDates.length > 0;
+  if (cal.status === "failed") sourceErrors.push(`交易日历获取失败：${cal.error?.message}`);
+  else if (lhbDates.length < 3) sourceErrors.push("交易日历返回的近期交易日不足 3 天，龙虎榜没有查全");
+  if (lhbFailedDates.length) sourceErrors.push(`龙虎榜获取失败：${lhbFailedDates.join("、")}`);
   if (lhbHits.length) facts.push({ id: "lhb", title: `最近 3 个交易日上过龙虎榜：${lhbHits.join("、")}`, source: "扶摇龙虎榜", time: lhbHits[0] });
 
   const negatives: Fact[] = [];
+  if (an.status === "failed") sourceErrors.push(`异动解读获取失败：${an.error?.message}`);
+  if (news.status === "failed") sourceErrors.push(`个股新闻获取失败：${news.error?.message}`);
   for (const a of an.data?.items ?? []) {
     const f: Fact = { id: `anomaly:${a.id}`, title: `异动「${a.tag}」：${a.keywords.join("、")}`, detail: "同花顺 AI 生成的异动解读", source: "扶摇异动解读", time: a.publishTs ? shDate(a.publishTs) : "", tone: /跌/.test(a.tag) ? "negative" : /涨/.test(a.tag) ? "positive" : "neutral", url: a.url };
     facts.push(f);
@@ -124,15 +133,18 @@ export async function runPrecheck(input: PrecheckInput, workspace: string, visit
     facts.push(f);
     negatives.push(f);
   }
-  {
-    const nt = await searchNotice(`${name ?? code} 公告`, addDays(today, -10), today, 6);
-    for (const [i, d] of (nt.data ?? []).entries()) {
-      if (!d.date || d.date < addDays(today, -10)) continue;
-      const f: Fact = { id: `notice:${i}`, title: d.title, source: "iFinD 公告", time: d.date, tone: toneOf(`${d.title} ${d.content}`) };
-      facts.push(f);
-      if (f.tone === "negative") negatives.push(f);
-    }
+  const nt = await searchNotice(`${name ?? code} 公告`, addDays(today, -10), today, 6);
+  if (nt.status === "failed") sourceErrors.push(`公告获取失败：${nt.error?.message}`);
+  // iFinD 检索会把同一份公告的多个片段分开返回，按标题去重
+  const seenNotice = new Set<string>();
+  for (const [i, d] of (nt.data ?? []).entries()) {
+    if (!d.date || d.date < addDays(today, -10) || seenNotice.has(d.title)) continue;
+    seenNotice.add(d.title);
+    const f: Fact = { id: `notice:${i}`, title: d.title, source: "iFinD 公告", time: d.date, tone: toneOf(`${d.title} ${d.content}`) };
+    facts.push(f);
+    if (f.tone === "negative") negatives.push(f);
   }
+  const attentionGaps = [an.status === "failed" ? "异动解读" : "", news.status === "failed" ? "个股新闻" : "", nt.status === "failed" ? "公告" : ""].filter(Boolean);
 
   // 本工作区里这只股票最近的成交
   const recentTrades = a.trades.filter((t) => t.code === code && t.ts >= Date.now() - 14 * DAY_MS);
@@ -150,9 +162,15 @@ export async function runPrecheck(input: PrecheckInput, workspace: string, visit
           ? { ...base, status: "triggered", detail: `最近 5 日 ${runup5.toFixed(1)}%${newHigh ? "，且创 20 日新高" : ""}`, factIds: ["runup5", "high20"] }
           : { ...base, status: "clear", detail: `最近 5 日 ${runup5.toFixed(1)}%`, factIds: ["runup5"] };
       case "hot": {
-        const hit = (latestRank && latestRank.rank <= 20) || lhbHits.length > 0;
-        if (!latestRank && hot.status === "failed") return { ...base, status: "unknown", detail: "热股排名没有取到", factIds: [] };
-        return { ...base, status: hit ? "triggered" : "clear", detail: [latestRank ? `热股第 ${latestRank.rank} 名` : "近期不在热股榜", lhbHits.length ? "近 3 日上过龙虎榜" : "近 3 日没上龙虎榜"].join("，"), factIds: ["hot", "lhb"] };
+        const rankHit = !!latestRank && latestRank.rank <= 20;
+        const parts = [
+          latestRank ? `热股第 ${latestRank.rank} 名` : hot.status === "failed" ? "热股排名没有取到" : "近期不在热股榜",
+          lhbHits.length ? `近 3 日上过龙虎榜（${lhbHits.join("、")}）` : lhbFailed ? "龙虎榜没有取全" : "近 3 日没上龙虎榜",
+        ];
+        // 有一项命中就算触发；两项都取到且都没命中才算未触发，否则无法判断
+        if (rankHit || lhbHits.length) return { ...base, status: "triggered", detail: parts.join("，"), factIds: ["hot", "lhb"] };
+        if (hot.status === "failed" || lhbFailed) return { ...base, status: "unknown", detail: `${parts.join("，")}，无法判断`, factIds: latestRank ? ["hot"] : [] };
+        return { ...base, status: "clear", detail: parts.join("，"), factIds: ["hot"] };
       }
       case "plan":
         if (input.side === "sell") return { ...base, status: "manual", detail: "卖出时对照买入时写的止损和目标", factIds: [] };
@@ -160,15 +178,16 @@ export async function runPrecheck(input: PrecheckInput, workspace: string, visit
           ? { ...base, status: "clear", detail: [input.planStop != null ? `止损 ${input.planStop}%` : "", input.planTarget != null ? `目标 +${input.planTarget}%` : ""].filter(Boolean).join("，"), factIds: [] }
           : { ...base, status: "triggered", detail: "还没有写止损或目标", factIds: [] };
       case "attention":
-        return negatives.length
-          ? { ...base, status: "triggered", detail: `近 10 天有 ${negatives.length} 条负面信息，理由里需要写明怎么看`, factIds: negatives.map((n) => n.id) }
-          : { ...base, status: "clear", detail: "近 10 天没有找到负面信息（数据源可能不完整）", factIds: [] };
+        if (negatives.length)
+          return { ...base, status: "triggered", detail: `近 10 天有 ${negatives.length} 条负面信息，理由里需要写明怎么看${attentionGaps.length ? `（${attentionGaps.join("、")}没有取到，可能还有遗漏）` : ""}`, factIds: negatives.map((n) => n.id) };
+        if (attentionGaps.length) return { ...base, status: "unknown", detail: `${attentionGaps.join("、")}没有取到，无法确认近 10 天有没有负面信息`, factIds: [] };
+        return { ...base, status: "clear", detail: "近 10 天的异动、新闻和公告里没有找到负面信息（按标题关键词筛选，可能有遗漏）", factIds: [] };
       case "overtrade":
         return recentTrades.length >= 2
           ? { ...base, status: "triggered", detail: `近两周已经交易 ${recentTrades.length} 次`, factIds: [] }
           : { ...base, status: "clear", detail: `近两周交易 ${recentTrades.length} 次`, factIds: [] };
       case "panic":
-        if (input.side === "buy") return { ...base, status: "clear", detail: "买入时不适用", factIds: [] };
+        if (input.side === "buy") return { ...base, status: "na", detail: "买入时不适用", factIds: [] };
         if (drop3 == null) return { ...base, status: "unknown", detail: "行情不足，无法计算", factIds: [] };
         return { ...base, status: drop3 <= -10 ? "triggered" : "clear", detail: `最近 3 日 ${drop3.toFixed(1)}%`, factIds: [] };
       default:

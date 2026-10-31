@@ -1,20 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tag } from "@/components/timing-badge";
+import { DecisionNotes } from "@/components/decision-notes";
 import { TRIGGER_TEXT } from "@/lib/labels";
 import type { PrecheckResult } from "@/lib/precheck";
+import type { DecisionNote } from "@/lib/records";
 
 const STATUS = {
   triggered: { text: "触发", tone: "danger" },
   clear: { text: "未触发", tone: "ok" },
   manual: { text: "自己对照", tone: "neutral" },
-  unknown: { text: "数据不足", tone: "warn" },
+  unknown: { text: "无法判断", tone: "warn" },
+  na: { text: "不适用", tone: "neutral" },
 } as const;
 
 export default function PrecheckPage() {
@@ -26,26 +30,66 @@ export default function PrecheckPage() {
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<PrecheckResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 检查时填的内容：保存记录时用它，而不是之后又改过的表单
+  const [ran, setRan] = useState<{ side: "buy" | "sell"; reason: string; planStop: number | null; planTarget: number | null } | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [notes, setNotes] = useState<DecisionNote[]>([]);
+
+  useEffect(() => {
+    fetch("/api/notes")
+      .then((r) => r.json())
+      .then((j) => setNotes(j.notes ?? []))
+      .catch(() => {});
+  }, []);
 
   const run = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     setRes(null);
+    setSaved(false);
+    const input = { side, reason: reason.trim(), planStop: stop ? Number(stop) : null, planTarget: target ? Number(target) : null };
     try {
       const r = await fetch("/api/precheck", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, side, reason, planStop: stop ? Number(stop) : null, planTarget: target ? Number(target) : null }),
+        body: JSON.stringify({ query, ...input }),
       });
       const j = await r.json();
       if (j.error) setError(j.error);
-      else setRes(j);
+      else {
+        setRes(j);
+        setRan(input);
+      }
     } catch {
       setError("检查失败，请检查网络后重试");
     } finally {
       setBusy(false);
     }
+  };
+
+  const saveNote = async () => {
+    if (!res || !ran) return;
+    const r = await fetch("/api/notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code: res.code,
+        name: res.name,
+        ...ran,
+        snapshot: {
+          asOf: res.asOf,
+          checks: res.checks.map((c) => ({ text: c.text, status: c.status, detail: c.detail })),
+          facts: res.facts.map((f) => ({ title: f.title, source: f.source, time: f.time })),
+          sourceErrors: res.sourceErrors,
+        },
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return toast.error(j.error ?? "保存失败");
+    setNotes(j.notes ?? []);
+    setSaved(true);
+    toast.success("已保存为决策记录");
   };
 
   const triggered = res?.checks.filter((c) => c.status === "triggered") ?? [];
@@ -151,6 +195,15 @@ export default function PrecheckPage() {
               </ul>
             </section>
 
+            <section className="rounded-lg border border-border bg-card p-5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+              <p className="text-sm text-muted-foreground">
+                {ran?.reason ? "把这次的理由、计划和上面的检查结果原样存下来，之后复盘时可以对照当时是怎么想的。" : "左边没有写理由。写下理由再检查一次，才能存为决策记录。"}
+              </p>
+              <Button size="sm" variant={saved ? "outline" : "default"} onClick={saveNote} disabled={saved || !ran?.reason}>
+                {saved ? "已保存" : "保存为决策记录"}
+              </Button>
+            </section>
+
             {res.related.length > 0 && (
               <section className="rounded-lg border border-border bg-card p-5">
                 <h2 className="text-[15px] font-semibold mb-3">你以前复盘过的相关教训</h2>
@@ -193,6 +246,7 @@ export default function PrecheckPage() {
             </section>
           </>
         )}
+        <DecisionNotes notes={notes} onChange={setNotes} />
       </div>
     </div>
   );

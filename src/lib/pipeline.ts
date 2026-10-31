@@ -32,7 +32,9 @@ import type { FetchStatus, SourceError, SourceResult } from "@/lib/sources/types
 
 export const DEMO_WORKSPACE = "demo";
 /** 证据生成逻辑改了就加 1，旧缓存自动失效 */
-const EVIDENCE_VERSION = 2;
+const EVIDENCE_VERSION = 3;
+/** 不稳定的证据集（未平仓、观察窗口没结束、有数据源失败）缓存多久后重取 */
+const UNSTABLE_TTL_MS = 30 * 60_000;
 const MARKET_INDEX = { code: "000300.SH", name: "沪深300" };
 
 // ---------------- 成交的存取 ----------------
@@ -153,6 +155,8 @@ export interface EvidenceSet {
   newsComplete: boolean;
   builtAt: number;
   version: number;
+  /** 已清仓、观察窗口已结束、数据源都正常：可以长期缓存 */
+  stable: boolean;
 }
 
 const pctChange = (bars: Bar[], from: string, to: string) => {
@@ -167,7 +171,7 @@ export async function buildEvidenceSet(workspace: string, episode: Episode, forc
     const row = db().prepare("SELECT json FROM evidence_sets WHERE episode_id = ?").get(key) as { json: string } | undefined;
     if (row) {
       const cachedSet = JSON.parse(row.json) as EvidenceSet;
-      if (cachedSet.version === EVIDENCE_VERSION) return cachedSet;
+      if (cachedSet.version === EVIDENCE_VERSION && (cachedSet.stable || Date.now() - cachedSet.builtAt < UNSTABLE_TTL_MS)) return cachedSet;
     }
   }
 
@@ -240,7 +244,52 @@ export async function buildEvidenceSet(workspace: string, episode: Episode, forc
       const drift = driftAfterSell(t, series, 10);
       if (drift) items.push(drift);
       const planStop = episode.trades.find((x) => x.side === "buy" && x.planStop != null)?.planStop ?? null;
-      const dd = drawdownBefore(episode, series, t.ts, planStop);
+      const planTarget = episode.trades.find((x) => x.side === "buy" && x.planTarget != null)?.planTarget ?? null;
+      const dd = drawdownBefore(episode, series, t.ts, planStop, planTarget);
+      // 计划在持有过程中有没有被违反：止损线被跌破后又拖了几个交易日、目标达到后有没有卖
+      const lag = (from: string) => days.filter((d) => d > from && d <= shDate(t.ts)).length;
+      if (dd?.stopBreach) {
+        const n = lag(dd.stopBreach.date);
+        items.push({
+          id: `calc:stoplag:${t.id}`,
+          kind: "computed",
+          title: `止损线 ${dd.stopBreach.date} 被跌破后，又过了 ${n} 个交易日才卖出`,
+          detail: n <= 1 ? "跌破后的下一个交易日内卖出，视为执行了止损" : "跌破止损线后没有在下一个交易日内卖出",
+          value: n,
+          unit: "交易日",
+          caliber: "从止损线被跌破（收盘价）的次日到卖出日，按交易日计数",
+          source: "程序计算",
+          endpoint: "/api/a-share/calendar/trading-days",
+          inputs: [`bar:${dd.stopBreach.date}`, `trade:${t.id}`],
+          eventTime: t.ts,
+          availableAt: t.ts,
+          precision: "ms",
+          fetchedAt: null,
+          status: cal.data ? "ok" : "partial",
+          tradeId: t.id,
+        });
+      }
+      if (planTarget != null) {
+        items.push({
+          id: `calc:target:${t.id}`,
+          kind: "computed",
+          title: dd?.targetHit
+            ? `计划目标 +${planTarget}% 在 ${dd.targetHit.date} 已经达到（收盘 ${dd.targetHit.close.toFixed(2)}，目标价 ${dd.targetHit.line.toFixed(2)}），${lag(dd.targetHit.date)} 个交易日后才卖出`
+            : `卖出前没有达到计划目标 +${planTarget}%`,
+          value: dd?.targetHit ? lag(dd.targetHit.date) : null,
+          unit: dd?.targetHit ? "交易日" : undefined,
+          caliber: "前复权；目标价 = 当时平均成本 × (1 + 目标涨幅)，按收盘价判断",
+          source: "程序计算",
+          endpoint: "/api/a-share/prices/historical",
+          inputs: dd?.targetHit ? [`bar:${dd.targetHit.date}`, `trade:${t.id}`] : [`trade:${t.id}`],
+          eventTime: t.ts,
+          availableAt: t.ts,
+          precision: "ms",
+          fetchedAt: null,
+          status: dd ? "ok" : "missing",
+          tradeId: t.id,
+        });
+      }
       if (dd?.worst) {
         items.push({
           id: `calc:dd:${t.id}`,
@@ -467,16 +516,21 @@ export async function buildEvidenceSet(workspace: string, episode: Episode, forc
     }
   }
 
-  items.sort((a, b) => (a.eventTime ?? 0) - (b.eventTime ?? 0));
+  // 数据源偶尔对同一条记录返回两次（异动解读的 analysis_id 重复、新闻翻页重叠），按 id 去重
+  const seen = new Set<string>();
+  const unique = items.filter((e) => (seen.has(e.id) ? false : (seen.add(e.id), true)));
+  unique.sort((a, b) => (a.eventTime ?? 0) - (b.eventTime ?? 0));
+  const stable = episode.closeTs != null && endRaw < today && news.complete && !sources.some((s) => s.status === "failed" || s.status === "stale");
   const set: EvidenceSet = {
     episode,
     window: { start, end },
     series: { ...series, index: idx.data ?? [], industry: industryBars, indexName: MARKET_INDEX.name, industryName: industry?.name ?? null, industryCode: industry?.code ?? null },
-    items,
+    items: unique,
     sources,
     newsComplete: news.complete,
     builtAt: Date.now(),
     version: EVIDENCE_VERSION,
+    stable,
   };
   // 关键数据失败时不缓存，下次重试
   if (!sources.some((s) => s.critical && s.status === "failed")) {

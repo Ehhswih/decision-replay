@@ -10,6 +10,7 @@ import { EvidenceSheet } from "@/components/evidence-sheet";
 import { EvidenceList } from "@/components/review/evidence-list";
 import { ExAntePanel } from "@/components/review/exante-panel";
 import { RevealPanel } from "@/components/review/reveal-panel";
+import { BeforeAfter, LinkedNotes, PrejudgmentForm, matchNotes } from "@/components/review/prejudgment";
 import { KIND_LABEL, fmtDate, fmtDateTime, pct, pctClass, timingOf } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import type { Evidence } from "@/lib/domain/evidence";
@@ -18,6 +19,7 @@ import type { Attribution } from "@/lib/domain/attribution";
 import type { Episode } from "@/lib/domain/types";
 import type { EvidenceSet } from "@/lib/pipeline";
 import type { ReviewDoc } from "@/lib/ai/review";
+import type { DecisionNote, Prejudgment, Verdict } from "@/lib/records";
 
 type RulesEp = { episode: Episode; biases: BiasResult[]; attribution: Attribution };
 type ReviewState = { status: "none" | "running" | "done" | "failed"; stage?: string; review?: ReviewDoc; error?: string };
@@ -38,6 +40,24 @@ export default function DecisionView() {
   const [isDemo, setIsDemo] = useState(true);
   const [wsLoaded, setWsLoaded] = useState(false);
   const autoStarted = useRef(false);
+  const [pjs, setPjs] = useState<Prejudgment[]>([]);
+  const [notes, setNotes] = useState<DecisionNote[]>([]);
+  // 这个持仓段是否打开过揭晓视图：之后再写的判断要标注出来
+  const revealKey = `dr_revealed:${episodeId}`;
+  const [revealedBefore, setRevealedBefore] = useState(() => {
+    try {
+      return typeof window !== "undefined" && localStorage.getItem(revealKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const reveal = () => {
+    setMode("reveal");
+    setRevealedBefore(true);
+    try {
+      localStorage.setItem(revealKey, "1");
+    } catch {}
+  };
 
   useEffect(() => {
     fetch("/api/rules")
@@ -58,6 +78,14 @@ export default function DecisionView() {
         setIsDemo(!!w.isDemo);
         setWsLoaded(true);
       })
+      .catch(() => {});
+    fetch(`/api/episodes/${encodeURIComponent(episodeId)}/prejudgment`)
+      .then((r) => r.json())
+      .then((j) => setPjs(j.items ?? []))
+      .catch(() => {});
+    fetch("/api/notes")
+      .then((r) => r.json())
+      .then((j) => setNotes(j.notes ?? []))
       .catch(() => {});
     fetch("/api/checklist")
       .then((r) => r.json())
@@ -141,6 +169,23 @@ export default function DecisionView() {
     } else toast.error("加入失败");
   };
 
+  const savePj = async (verdict: Verdict, worry: string) => {
+    if (!decision) return;
+    const r = await fetch(`/api/episodes/${encodeURIComponent(episodeId)}/prejudgment`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tradeId: decision.id, verdict, worry, afterReveal: revealedBefore }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      toast.error(j.error ?? "保存失败");
+      return;
+    }
+    setPjs(j.items ?? []);
+    reveal();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   if (error) {
     return (
       <div className="space-y-3">
@@ -217,7 +262,7 @@ export default function DecisionView() {
               回到当时
             </button>
             <button
-              onClick={() => setMode("reveal")}
+              onClick={reveal}
               aria-pressed={!curtain}
               className={cn("px-4 py-1.5 rounded-md text-sm transition-colors", !curtain ? "bg-expost text-white" : "text-muted-foreground hover:bg-muted")}
             >
@@ -230,17 +275,45 @@ export default function DecisionView() {
       <div className="grid lg:grid-cols-[minmax(0,1fr)_360px] gap-5 items-start">
         <div className="space-y-4 min-w-0">
           <div className="rounded-lg border border-border bg-card p-3">
-            <KlineChart raw={set.series.raw} adj={set.series.adj} trades={chartTrades} events={chartEvents} decisionDate={fmtDate(decisionTs)} curtain={curtain} onEventClick={openById} />
+            <KlineChart raw={set.series.raw} adj={set.series.adj} trades={chartTrades} events={chartEvents} decisionDate={fmtDate(decisionTs)} cutoffTs={curtain ? decisionTs : null} onEventClick={openById} />
             <p className="px-2 pt-1 text-xs text-muted-foreground">
-              K 线为前复权；三角是成交，圆点是公告、财报、异动等事件（点击查看出处）。
+              {curtain ? "回到当时：K 线用不复权价格，只画决策时已经收盘的部分（盘中成交时当天那根也不画），纵轴也只按这部分数据定范围。" : "K 线为前复权。"}
+              三角是成交，圆点是公告、财报、异动等事件（点击查看出处）。
               {set.episode.corpEvents.length > 0 && " 持仓期间有除权除息，不复权价格会跳空，收益按复权口径计算。"}
             </p>
           </div>
 
           {curtain ? (
-            <ExAntePanel trade={decision} plan={plan} view={review?.exAnte.find((v) => v.tradeId === decision.id)} biases={biases} evidence={evidence} onOpen={setOpen} aiState={aiState} />
+            <>
+              <ExAntePanel trade={decision} plan={plan} view={review?.exAnte.find((v) => v.tradeId === decision.id)} biases={biases} evidence={evidence} onOpen={setOpen} aiState={aiState} />
+              <LinkedNotes notes={matchNotes(notes, decision)} trade={decision} revealed={false} />
+              <PrejudgmentForm
+                key={decision.id}
+                trade={decision}
+                existing={pjs.find((p) => p.tradeId === decision.id)}
+                revealedBefore={revealedBefore}
+                onSubmit={savePj}
+                onSkip={() => {
+                  reveal();
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+              />
+            </>
           ) : (
-            <RevealPanel review={review} biases={biases} attribution={attribution} evidence={evidence} decisionTs={decisionTs} onOpen={setOpen} onAddLesson={addLesson} addedLessons={added} aiState={aiState} />
+            <>
+              {pjs.find((p) => p.tradeId === decision.id) && (
+                <BeforeAfter
+                  pj={pjs.find((p) => p.tradeId === decision.id)!}
+                  trade={decision}
+                  biases={biases}
+                  attribution={attribution}
+                  view={review?.exAnte.find((v) => v.tradeId === decision.id)}
+                  evidence={evidence}
+                />
+              )}
+              <RevealPanel review={review} biases={biases} attribution={attribution} evidence={evidence} decisionTs={decisionTs} onOpen={setOpen} onAddLesson={addLesson} addedLessons={added} aiState={aiState} />
+              <LinkedNotes notes={matchNotes(notes, decision)} trade={decision} revealed />
+            </>
           )}
 
           {review && !isDemo && (

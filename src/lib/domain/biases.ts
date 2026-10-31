@@ -62,7 +62,7 @@ export const BIAS_META: Record<BiasId, { name: string; rule: string; alternative
   },
   B7: {
     name: "偏离计划",
-    rule: "理由里写了止损或目标，实际卖出时比计划多亏或少赚超过 3 个百分点",
+    rule: "写了止损或目标时分开核对：收盘跌破止损线后超过 1 个交易日才卖；目标达到后回吐、卖出时比目标少 3 个百分点以上；没到目标就提前卖出、少赚 3 个百分点以上",
     alternatives: ["计划可能因为新信息而合理调整，但调整没有被记录下来"],
   },
   B8: {
@@ -79,8 +79,11 @@ function result(ruleId: BiasId, scope: BiasResult["scope"], partial: Omit<BiasRe
   return { ruleId, name: m.name, rule: m.rule, alternatives: m.alternatives, scope, ...partial };
 }
 
-/** 单个持仓段内的规则：B1 B2 B3 B6 B7 B8 */
-export function episodeBiases(ep: Episode, items: Evidence[]): BiasResult[] {
+/**
+ * 单个持仓段内的规则：B1 B2 B3 B6 B7 B8。
+ * attentionGaps：没取到的新闻、异动、公告数据源。有缺口时找不到负面信息只能算"无法判定"
+ */
+export function episodeBiases(ep: Episode, items: Evidence[], attentionGaps: string[] = []): BiasResult[] {
   const ev = byId(items);
   const out: BiasResult[] = [];
   const buys = ep.trades.filter((t) => t.side === "buy");
@@ -132,11 +135,16 @@ export function episodeBiases(ep: Episode, items: Evidence[]): BiasResult[] {
         e.availableAt >= t.ts - 10 * 86_400_000 &&
         classify(e, t.ts) === "ex_ante",
     );
+    const gap = !negatives.length && attentionGaps.length > 0;
     out.push(
       result("B8", "trade", {
-        outcome: negatives.length ? "undetermined" : "not_hit",
+        outcome: negatives.length || gap ? "undetermined" : "not_hit",
         tradeId: t.id,
-        finding: negatives.length ? `买入前 10 天内有 ${negatives.length} 条当时可知的负面信息，需要对照理由判断是否被忽略` : "买入前 10 天内没有找到当时可知的负面信息",
+        finding: negatives.length
+          ? `买入前 10 天内有 ${negatives.length} 条当时可知的负面信息，需要对照理由判断是否被忽略`
+          : gap
+            ? `${attentionGaps.join("、")}没有取到，无法确认买入前 10 天有没有负面信息`
+            : "买入前 10 天内没有找到当时可知的负面信息",
         evidenceIds: negatives.slice(0, 12).map((e) => e.id),
         confidence: "low",
         needsAi: negatives.length > 0,
@@ -178,7 +186,8 @@ export function episodeBiases(ep: Episode, items: Evidence[]): BiasResult[] {
     }
   }
 
-  // B7 偏离计划：按持仓段看最后一笔卖出
+  // B7 偏离计划：持有过程中的违规和最后的退出价分开看。
+  // 跌破止损线后拖着不卖、到了目标又回吐，即使最后回本也算偏离；没发现偏离不等于证明执行到位
   const closing = sells.find((t) => t.positionAfter === 0);
   const stop = buys.find((t) => t.planStop != null)?.planStop ?? null;
   const target = buys.find((t) => t.planTarget != null)?.planTarget ?? null;
@@ -194,29 +203,59 @@ export function episodeBiases(ep: Episode, items: Evidence[]): BiasResult[] {
   } else if (closing) {
     const vs = ev.get(`calc:vscost:${closing.id}`);
     const stopEv = ev.get(`calc:stop:${closing.id}`);
-    if (vs?.value == null) {
-      out.push(result("B7", "episode", { outcome: "undetermined", finding: "缺少卖出价相对成本的计算，无法核对", evidenceIds: [], confidence: "low" }));
-    } else {
-      const pct = vs.value;
-      const parts: string[] = [];
-      let hit = false;
-      if (stop != null && pct < 0 && -pct - stop > 3) {
-        hit = true;
-        parts.push(`计划止损 ${stop}%，实际卖出时相对成本 ${pct.toFixed(1)}%，多亏了 ${(-pct - stop).toFixed(1)} 个百分点`);
-      }
-      if (target != null && pct > 0 && target - pct > 3) {
-        hit = true;
-        parts.push(`计划目标 +${target}%，实际在 ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}% 就卖出，比目标少了 ${(target - pct).toFixed(1)} 个百分点`);
-      }
-      if (!hit) parts.push(`卖出时相对成本 ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%，和计划（${[stop != null ? `止损 ${stop}%` : "", target != null ? `目标 +${target}%` : ""].filter(Boolean).join("、")}）的偏差在 3 个百分点以内`);
-      if (stopEv && /被跌破/.test(stopEv.title)) parts.push(stopEv.title);
+    const targetEv = ev.get(`calc:target:${closing.id}`);
+    // 止损线被跌破之后的第一笔卖出：看跌破后拖了几个交易日
+    const lagEv = sells.map((t) => ev.get(`calc:stoplag:${t.id}`)).find((e) => e?.value != null);
+    const pct = vs?.value ?? null;
+    const sign = (x: number) => `${x >= 0 ? "+" : ""}${x.toFixed(1)}%`;
+    const stopKnown = stop == null || stopEv?.status === "ok";
+    const targetKnown = target == null || targetEv?.status === "ok";
+    const violations: string[] = [];
+    const notes: string[] = [];
+
+    if (stop != null && stopKnown) {
+      if (lagEv && (lagEv.value as number) >= 2) {
+        violations.push(`${lagEv.title}（计划止损 ${stop}%）`);
+        if (pct != null && pct > -stop) notes.push(`最后卖出时相对成本 ${sign(pct)}，价格回来了不代表当时执行了计划`);
+      } else if (lagEv) {
+        notes.push(lagEv.title);
+        if (pct != null && -pct - stop > 3) notes.push(`卖出价比止损线多亏 ${(-pct - stop).toFixed(1)} 个百分点，来自跌破当天之后的跳空或连续下跌，不算没执行`);
+      } else if (stopEv) notes.push(stopEv.title);
+    } else if (stop != null && pct != null && pct < 0 && -pct - stop > 3) {
+      // 缺少持仓期间的行情时，只能用最后的卖出价兜底
+      violations.push(`计划止损 ${stop}%，实际卖出时相对成本 ${pct.toFixed(1)}%，多亏了 ${(-pct - stop).toFixed(1)} 个百分点`);
+    }
+    if (target != null && targetKnown && pct != null) {
+      if (targetEv?.value != null && target - pct > 3) {
+        violations.push(`${targetEv.title}，卖出时相对成本只剩 ${sign(pct)}，比目标少了 ${(target - pct).toFixed(1)} 个百分点`);
+      } else if (targetEv?.value == null && pct > 0 && target - pct > 3) {
+        violations.push(`计划目标 +${target}%，还没到目标就在 ${sign(pct)} 卖出，比目标少了 ${(target - pct).toFixed(1)} 个百分点`);
+      } else if (targetEv) notes.push(targetEv.title);
+    }
+
+    const evidenceIds = [vs?.id, stopEv?.id, lagEv?.id, targetEv?.id, ...buys.map((t) => `trade:${t.id}`)].filter((x): x is string => !!x);
+    if (violations.length) {
+      out.push(result("B7", "episode", { outcome: "hit", tradeId: closing.id, finding: [...violations, ...notes].join("；"), evidenceIds, confidence: "high" }));
+    } else if (pct == null || !stopKnown || !targetKnown) {
       out.push(
         result("B7", "episode", {
-          outcome: hit ? "hit" : "not_hit",
+          outcome: "undetermined",
           tradeId: closing.id,
-          finding: parts.join("；"),
-          evidenceIds: [vs.id, stopEv?.id, ...buys.map((t) => `trade:${t.id}`)].filter((x): x is string => !!x),
-          confidence: "high",
+          finding: pct == null ? "缺少卖出价相对成本的计算，无法核对" : "缺少持仓期间的行情，无法确认中途有没有跌破止损线或达到目标",
+          evidenceIds,
+          confidence: "low",
+        }),
+      );
+    } else {
+      const plan = [stop != null ? `止损 ${stop}%` : "", target != null ? `目标 +${target}%` : ""].filter(Boolean).join("、");
+      out.push(
+        result("B7", "episode", {
+          outcome: "not_hit",
+          tradeId: closing.id,
+          finding: [`没有发现违反计划（${plan}）的情况，卖出时相对成本 ${sign(pct)}`, ...notes].join("；"),
+          evidenceIds,
+          // 只说明规则没查到问题，不等于证明执行到位
+          confidence: "mid",
         }),
       );
     }

@@ -19,18 +19,25 @@ export interface PortfolioRules {
 }
 
 /** 规则版复盘：整个组合一起算，因为处置效应和过度交易要跨持仓段看 */
-export async function rulesForWorkspace(workspace: string): Promise<PortfolioRules> {
+/** 选择性关注要用到的数据源里，哪些没取到或没取全 */
+function attentionGaps(set: EvidenceSet): string[] {
+  const gaps = set.sources.filter((s) => ["news", "anomalies", "ifindNotice"].includes(s.key) && (s.status === "failed" || s.status === "skipped")).map((s) => s.label);
+  if (!set.newsComplete && !gaps.includes("个股新闻")) gaps.push("决策前的个股新闻（没有翻到头）");
+  return gaps;
+}
+
+export async function rulesForWorkspace(workspace: string, opts: { refreshEpisode?: string } = {}): Promise<PortfolioRules> {
   const a = await analyzeWorkspace(workspace);
   // 每个持仓段要调十几次数据源（热门股新闻还要翻很多页），3 个一组并行，兼顾速度和数据源限流
   const sets = new Map<string, EvidenceSet>();
   const queue = [...a.episodes];
   await Promise.all(
     Array.from({ length: Math.min(3, queue.length) }, async () => {
-      for (let ep = queue.shift(); ep; ep = queue.shift()) sets.set(ep.id, await buildEvidenceSet(workspace, ep));
+      for (let ep = queue.shift(); ep; ep = queue.shift()) sets.set(ep.id, await buildEvidenceSet(workspace, ep, ep.id === opts.refreshEpisode));
     }),
   );
 
-  const perEpisode = a.episodes.map((ep) => ({ ep, biases: episodeBiases(ep, sets.get(ep.id)!.items) }));
+  const perEpisode = a.episodes.map((ep) => ({ ep, biases: episodeBiases(ep, sets.get(ep.id)!.items, attentionGaps(sets.get(ep.id)!)) }));
   const portfolio = portfolioBiases(
     a.episodes.map((ep) => {
       const set = sets.get(ep.id)!;

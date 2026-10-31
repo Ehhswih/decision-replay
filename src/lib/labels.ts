@@ -24,7 +24,7 @@ export const CONFIDENCE_TEXT = { high: "置信度高", mid: "置信度中", low:
 export const ERROR_TYPE_TEXT: Record<string, string> = {
   judgment: "看错了",
   execution: "没做好",
-  unforeseeable: "不可预见",
+  unforeseeable: "可能受事后事件影响",
   none: "没有明显问题",
   undetermined: "暂无法归类",
 };

@@ -44,14 +44,44 @@ describe("单个持仓段的规则", () => {
     expect(find(episodeBiases(ep, [calc("calc:dd:s", -9), calc("calc:vscost:s", -0.7)]), "B6").outcome).toBe("not_hit");
   });
 
-  it("B7 偏离计划：止损没执行、目标没拿到都算；按计划执行不算；没写计划是无法判定", () => {
+  it("B7 偏离计划：止损没执行、目标没拿到都算；没写计划是无法判定", () => {
     const stopBuy = trade("b", "buy", T0, { planStop: 8 });
     const s = trade("s", "sell", T0 + 86_400_000 * 20);
+    const noBreach = calc("calc:stop:s", 8, "卖出前没有跌破计划止损 8% 的止损线");
+    // 缺少持仓期间的行情时，用最后的卖出价兜底
     expect(find(episodeBiases(episode([stopBuy, s], -41), [calc("calc:vscost:s", -41.6)]), "B7").outcome).toBe("hit");
-    expect(find(episodeBiases(episode([stopBuy, s], -8.5), [calc("calc:vscost:s", -8.4)]), "B7").outcome).toBe("not_hit");
+    expect(find(episodeBiases(episode([stopBuy, s], -8.5), [calc("calc:vscost:s", -8.4), noBreach]), "B7").outcome).toBe("not_hit");
     const targetBuy = trade("b", "buy", T0, { planTarget: 15 });
-    expect(find(episodeBiases(episode([targetBuy, s], 5.5), [calc("calc:vscost:s", 5.6)]), "B7").finding).toContain("比目标少了 9.4");
+    const notReached = calc("calc:target:s", 0, "卖出前没有达到计划目标 +15%", { value: null });
+    expect(find(episodeBiases(episode([targetBuy, s], 5.5), [calc("calc:vscost:s", 5.6), notReached]), "B7").finding).toContain("比目标少了 9.4");
     expect(find(episodeBiases(episode([trade("b", "buy", T0), s], 1), [calc("calc:vscost:s", 1)]), "B7").outcome).toBe("undetermined");
+  });
+
+  it("B7 跌破止损线后拖着不卖，即使最后回本也算偏离；跌破后下一个交易日就卖不算", () => {
+    const stopBuy = trade("b", "buy", T0, { planStop: 8 });
+    const s = trade("s", "sell", T0 + 86_400_000 * 20);
+    const breach = calc("calc:stop:s", 8, "计划止损 8% 的止损线在 2026-06-25 被跌破");
+    const late = calc("calc:stoplag:s", 9, "止损线 2026-06-25 被跌破后，又过了 9 个交易日才卖出");
+    const recovered = find(episodeBiases(episode([stopBuy, s], 1.2), [calc("calc:vscost:s", 1.3), breach, late]), "B7");
+    expect(recovered.outcome).toBe("hit");
+    expect(recovered.finding).toContain("价格回来了不代表当时执行了计划");
+    expect(recovered.evidenceIds).toContain("calc:stoplag:s");
+    // 跌破后下一个交易日卖出，多亏的部分来自跳空，不算没执行
+    const onTime = find(episodeBiases(episode([stopBuy, s], -14), [calc("calc:vscost:s", -14.2), breach, calc("calc:stoplag:s", 1, "止损线 2026-06-25 被跌破后，又过了 1 个交易日才卖出")]), "B7");
+    expect(onTime.outcome).toBe("not_hit");
+    expect(onTime.finding).toContain("没有发现违反计划");
+    expect(onTime.confidence).toBe("mid");
+  });
+
+  it("B7 目标达到后没卖、回吐到比目标少 3 个百分点以上算偏离；止损行情缺失时是无法判定", () => {
+    const targetBuy = trade("b", "buy", T0, { planTarget: 15 });
+    const s = trade("s", "sell", T0 + 86_400_000 * 20);
+    const reached = calc("calc:target:s", 6, "计划目标 +15% 在 2026-07-01 已经达到，6 个交易日后才卖出");
+    expect(find(episodeBiases(episode([targetBuy, s], 4), [calc("calc:vscost:s", 4.1), reached]), "B7").outcome).toBe("hit");
+    expect(find(episodeBiases(episode([targetBuy, s], 16), [calc("calc:vscost:s", 16.2), reached]), "B7").outcome).toBe("not_hit");
+    const stopBuy = trade("b", "buy", T0, { planStop: 8 });
+    const missing = calc("calc:stop:s", 8, "卖出前没有跌破计划止损 8% 的止损线", { status: "missing" });
+    expect(find(episodeBiases(episode([stopBuy, s], -3), [calc("calc:vscost:s", -3), missing]), "B7").outcome).toBe("undetermined");
   });
 
   it("B8 选择性关注：只看买入前 10 天内、当时可知的负面信息，事后的不算", () => {
@@ -105,7 +135,7 @@ describe("过程、结果和问题归类", () => {
   const bias = (ruleId: BiasResult["ruleId"], outcome: BiasResult["outcome"], evidenceIds: string[] = []): BiasResult =>
     ({ ruleId, name: ruleId, rule: "", scope: "trade", outcome, finding: ruleId, evidenceIds, alternatives: [], confidence: "high" });
 
-  it("有计划、按计划止损、亏损来自买入后的利空：过程好 · 结果差，不可预见", () => {
+  it("有计划、按计划止损、亏损时出现了买入后的利空：过程好 · 结果差，可能受事后事件影响", () => {
     const b = trade("b", "buy", T0, { reason: "估值回到中枢", planStop: 8 });
     const ep = episode([b, trade("s", "sell", T0 + 86_400_000 * 4)], -8.5);
     const later: Evidence = { id: "anomaly:x", kind: "anomaly", title: "异动「跌停」：半年度业绩预亏", source: "扶摇", eventTime: T0 + 86_400_000 * 3, availableAt: T0 + 86_400_000 * 3, precision: "ms", fetchedAt: null, status: "ok", tone: "negative", important: true };
@@ -113,6 +143,22 @@ describe("过程、结果和问题归类", () => {
     expect(a.quadrant).toBe("过程好 · 结果差");
     expect(a.errorType).toBe("unforeseeable");
     expect(a.errorReason.evidenceIds).toEqual(["anomaly:x"]);
+    expect(a.errorReason.text).toContain("不能证明是主因");
+  });
+
+  it("亏损但找不到被推翻的假设：暂无法归类，不因为亏了就判看错了", () => {
+    const ep = episode([trade("b", "buy", T0, { reason: "放量突破" }), trade("s", "sell", T0 + 86_400_000 * 10)], -6);
+    const biases = [bias("B1", "hit"), bias("B7", "undetermined")];
+    expect(attribute(ep, [], biases).errorType).toBe("undetermined");
+    // 只引用成交记录本身不算相反证据
+    expect(attribute(ep, [], biases, { failedAssumption: { text: "突破没有延续", evidenceIds: ["trade:b"] } }).errorType).toBe("undetermined");
+    // 只用价格跌幅当相反证据，也等于"因为亏了所以看错了"
+    const priceOnly = { text: "理由说放量突破，但随后 3 天跌回突破位以下", evidenceIds: ["trade:b", "calc:runup3:s"] };
+    expect(attribute(ep, [calc("calc:runup3:s", -9)], biases, { failedAssumption: priceOnly }).errorType).toBe("undetermined");
+    const notice: Evidence = { id: "notice:1", kind: "notice", title: "大股东减持计划", source: "iFinD", eventTime: T0 - 86_400_000, availableAt: T0 - 86_400_000, precision: "day", fetchedAt: null, status: "ok", tone: "negative" };
+    const a = attribute(ep, [notice], biases, { failedAssumption: { text: "理由说资金在抢筹，但买入前一天已有大股东减持计划", evidenceIds: ["trade:b", "notice:1"] } });
+    expect(a.errorType).toBe("judgment");
+    expect(a.errorReason.evidenceIds).toContain("notice:1");
   });
 
   it("止损没执行：没做好", () => {

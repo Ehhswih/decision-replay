@@ -1,5 +1,6 @@
-// 归因的规则版：过程好坏 × 结果好坏，以及问题归类（看错了 / 没做好 / 不可预见）。
-// AI 之后可以补充理由，但不能推翻这里基于数字的判断，只能在"判断"类问题上给出更细的解释。
+// 归因的规则版：过程好坏 × 结果好坏，以及问题归类（看错了 / 没做好 / 可能受事后事件影响 / 暂无法归类）。
+// 亏损本身不能证明判断错了：只有找到"理由里的假设 + 和它相反的证据"才归为看错了，证据不够就暂不归类。
+// AI 可以提供被推翻的假设，但不能推翻这里基于数字的判断。
 
 import { classify } from "./pit";
 import type { BiasResult } from "./biases";
@@ -22,7 +23,7 @@ export interface Attribution {
   processPoints: Point[];
   errorType: ErrorType;
   errorReason: Point;
-  /** 规则认为可能"不可预见"的事后事件，供 AI 写叙述时引用 */
+  /** 持仓期间出现、买入时还不知道的负面事件：只是可能相关的影响因素，供 AI 写叙述时引用 */
   expostEvents: string[];
 }
 
@@ -31,16 +32,22 @@ export const OUTCOME_LABEL: Record<OutcomeGrade, string> = { gain: "结果盈利
 export const ERROR_LABEL: Record<ErrorType, string> = {
   judgment: "看错了",
   execution: "没做好",
-  unforeseeable: "不可预见",
+  unforeseeable: "可能受事后事件影响",
   none: "没有明显问题",
   undetermined: "暂无法归类",
 };
 
 const BEHAVIOR_RULES = new Set(["B1", "B2", "B3", "B6"]);
+const CONTRARY_KINDS = new Set<Evidence["kind"]>(["news", "notice", "anomaly", "financial"]);
 /** 追涨和追热点是同一种买入时机问题，恐慌卖出和锚定成本价是同一种卖出问题，同组只算一次 */
 const BEHAVIOR_GROUP: Record<string, string> = { B1: "entry", B2: "entry", B3: "exit", B6: "exit" };
 
-export function attribute(ep: Episode, items: Evidence[], biases: BiasResult[]): Attribution {
+export function attribute(
+  ep: Episode,
+  items: Evidence[],
+  biases: BiasResult[],
+  opts: { failedAssumption?: Point | null } = {},
+): Attribution {
   const buys = ep.trades.filter((t) => t.side === "buy");
   const own = biases.filter((b) => !b.episodeIds || b.episodeIds.includes(ep.id));
   const hits = own.filter((b) => b.outcome === "hit" && BEHAVIOR_RULES.has(b.ruleId));
@@ -60,7 +67,7 @@ export function attribute(ep: Episode, items: Evidence[], biases: BiasResult[]):
       : { text: "买入时没有写退出计划（止损或目标）", evidenceIds: buys.map((t) => `trade:${t.id}`) },
   );
   if (b7?.outcome === "hit") points.push({ text: `没有按计划执行：${b7.finding}`, evidenceIds: b7.evidenceIds });
-  if (b7?.outcome === "not_hit") points.push({ text: "按计划执行了退出", evidenceIds: b7.evidenceIds });
+  if (b7?.outcome === "not_hit") points.push({ text: "规则没有发现偏离计划的情况（不等于证明执行到位）", evidenceIds: b7.evidenceIds });
   for (const h of hits) points.push({ text: `命中「${h.name}」规则：${h.finding}`, evidenceIds: h.evidenceIds });
 
   let process: ProcessGrade;
@@ -84,8 +91,17 @@ export function attribute(ep: Episode, items: Evidence[], biases: BiasResult[]):
       classify(e, firstBuy) === "ex_post" &&
       (ep.closeTs == null || e.availableAt <= ep.closeTs),
   ).sort((x, y) => priority(x) - priority(y) || (x.availableAt as number) - (y.availableAt as number));
-  // 选择性关注是 AI 判断：只有至少 2 条重要且相关的负面信息被忽略（置信度"中"）时，才挡住"不可预见"
+  // 选择性关注是 AI 判断：只有至少 2 条重要且相关的负面信息被忽略（置信度"中"）时，才挡住"可能受事后事件影响"
   const exanteNeg = own.find((b) => b.ruleId === "B8" && b.outcome === "hit" && b.confidence === "mid");
+  // "看错了"要有被推翻的假设和相反的证据。相反证据得是事件或基本面（新闻、公告、异动、财报），
+  // 只引用成交记录或价格跌幅等于"因为亏了所以看错了"，不算
+  const fa = opts.failedAssumption;
+  const byId = new Map(items.map((e) => [e.id, e]));
+  const contrary = (id: string) => {
+    const e = byId.get(id);
+    return !!e && CONTRARY_KINDS.has(e.kind) && e.tone !== "positive";
+  };
+  const failed = fa?.text.trim() && fa.evidenceIds.some(contrary) ? fa : null;
 
   let errorType: ErrorType;
   let errorReason: Point;
@@ -98,12 +114,18 @@ export function attribute(ep: Episode, items: Evidence[], biases: BiasResult[]):
   } else if (outcome === "loss" && process === "good" && expost.length && !exanteNeg) {
     errorType = "unforeseeable";
     errorReason = {
-      text: `过程合理，亏损主要来自买入之后才出现的事件：${expost.slice(0, 2).map((e) => e.title).join("；")}`,
+      text: `过程没有发现明显问题；持仓期间出现了买入时还不知道的负面事件，可能与亏损有关，但不能证明是主因：${expost.slice(0, 2).map((e) => e.title).join("；")}`,
       evidenceIds: expost.slice(0, 3).map((e) => e.id),
     };
-  } else if (outcome === "loss") {
+  } else if (outcome === "loss" && failed) {
     errorType = "judgment";
-    errorReason = { text: "亏损不能归到执行或突发事件上，更可能是买入时的判断有问题（具体哪条假设不成立由复盘叙述说明）", evidenceIds: buys.map((t) => `trade:${t.id}`) };
+    errorReason = { text: `买入理由里的假设被证据否定：${failed.text}`, evidenceIds: failed.evidenceIds };
+  } else if (outcome === "loss") {
+    errorType = "undetermined";
+    errorReason = {
+      text: `亏损不能归到执行问题上，现有证据也找不到理由里哪条假设被推翻，暂不归类${expost.length ? `。持仓期间出现过买入时不知道的负面事件（${expost.slice(0, 2).map((e) => e.title).join("；")}），可能相关，但不能据此认定` : ""}`,
+      evidenceIds: expost.slice(0, 3).map((e) => e.id),
+    };
   } else {
     errorType = "none";
     errorReason = {

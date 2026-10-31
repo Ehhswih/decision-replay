@@ -70,6 +70,36 @@ CREATE TABLE IF NOT EXISTS checklist (
   enabled           INTEGER NOT NULL DEFAULT 1,
   created_at        INTEGER NOT NULL
 );
+
+-- 揭晓前写下的判断：按访客保存，写下后不能修改
+CREATE TABLE IF NOT EXISTS prejudgments (
+  visitor      TEXT NOT NULL,
+  workspace    TEXT NOT NULL,
+  episode_id   TEXT NOT NULL,
+  trade_id     TEXT NOT NULL,
+  verdict      TEXT NOT NULL,
+  worry        TEXT,
+  after_reveal INTEGER NOT NULL DEFAULT 0,
+  created_at   INTEGER NOT NULL,
+  PRIMARY KEY (visitor, workspace, trade_id)
+);
+
+-- 决策前检查存下的记录：补充理由时新增一个版本，原版本保留
+CREATE TABLE IF NOT EXISTS decision_notes (
+  id          TEXT PRIMARY KEY,
+  root_id     TEXT NOT NULL,
+  version     INTEGER NOT NULL,
+  visitor     TEXT NOT NULL,
+  code        TEXT NOT NULL,
+  name        TEXT,
+  side        TEXT NOT NULL,
+  reason      TEXT NOT NULL,
+  plan_stop   REAL,
+  plan_target REAL,
+  snapshot    TEXT,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS notes_visitor ON decision_notes(visitor, code, created_at);
 `;
 
 const globalForDb = globalThis as unknown as { __db?: DatabaseSync };

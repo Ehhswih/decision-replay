@@ -117,9 +117,15 @@ function ctxFor(pack: PackItem[], evidence: Map<string, Evidence>, log: LogEntry
 type ExAnteOut = { summary?: string; supporting?: unknown; warnings?: unknown; reason_check?: { claim?: string; status?: string; text?: string; evidence_ids?: string[] }[]; negatives_check?: { evidence_id?: string; addressed_in_reason?: boolean; relevant?: boolean; note?: string }[] };
 type ExPostOut = { narrative?: string; facts?: unknown; bias_notes?: { rule_id?: string; explanation?: string; alternative?: string }[]; failed_assumption?: { text?: string; evidence_ids?: string[] }; uncertainties?: unknown; lessons?: { text?: string; trigger?: string; evidence_ids?: string[] }[] };
 
-export async function generateReview(workspace: string, episodeId: string, onStage: (s: string) => void = () => {}): Promise<ReviewDoc> {
-  onStage("整理证据和规则结果");
-  const rules = await rulesForWorkspace(workspace);
+export async function generateReview(
+  workspace: string,
+  episodeId: string,
+  onStage: (s: string) => void = () => {},
+  opts: { refreshEvidence?: boolean } = {},
+): Promise<ReviewDoc> {
+  onStage(opts.refreshEvidence ? "重新取数并整理证据" : "整理证据和规则结果");
+  // 重新生成时同时刷新这个持仓段的证据，而不是继续用旧缓存
+  const rules = await rulesForWorkspace(workspace, { refreshEpisode: opts.refreshEvidence ? episodeId : undefined });
   const er = rules.episodes.find((x) => x.episode.id === episodeId);
   const set = rules.sets.get(episodeId);
   if (!er || !set) throw new Error("找不到这个持仓段");
@@ -184,7 +190,7 @@ export async function generateReview(workspace: string, episodeId: string, onSta
     const view = exAnte.find((v) => v.tradeId === b.tradeId);
     if (view) biases[i] = resolveB8(b, view.negativesCheck, evidence);
   }
-  const attribution = attribute(ep, set.items, biases);
+  let attribution = attribute(ep, set.items, biases);
 
   // 3. 事后复盘
   onStage("生成事后复盘");
@@ -222,6 +228,8 @@ export async function generateReview(workspace: string, episodeId: string, onSta
       failedAssumption: fa ? { ...fa, type: "inference" } : null,
       uncertainties: checkClaims(r.data.uncertainties, ctx).map((c) => ({ ...c, type: "uncertain" as const })),
     };
+    // 通过校验的"被推翻的假设"才能把亏损归为看错了
+    attribution = attribute(ep, set.items, biases, { failedAssumption: expost.failedAssumption });
     const triggers: LessonTrigger[] = ["chase", "hot", "panic", "anchor", "plan", "overtrade", "disposition", "attention", "other"];
     lessons = (r.data.lessons ?? [])
       .map((x): Lesson | null => {
@@ -292,7 +300,7 @@ export function startReview(workspace: string, episodeId: string, force = false)
   if (running.has(key) || (cur.status === "done" && !force)) return cur;
   running.add(key);
   save(key, workspace, "running", { stage: "排队中" }, null);
-  void generateReview(workspace, episodeId, (stage) => save(key, workspace, "running", { stage }, null))
+  void generateReview(workspace, episodeId, (stage) => save(key, workspace, "running", { stage }, null), { refreshEvidence: force })
     .then((doc) => save(key, workspace, "done", doc, null))
     .catch((e) => save(key, workspace, "failed", null, e instanceof Error ? e.message : String(e)))
     .finally(() => running.delete(key));
@@ -310,5 +318,5 @@ export function refreshDerived(doc: ReviewDoc, ep: Episode, items: Evidence[], b
     const view = doc.exAnte.find((v) => v.tradeId === b.tradeId);
     return view ? resolveB8(b, view.negativesCheck, evidence) : b;
   });
-  return { ...doc, biases, attribution: attribute(ep, items, biases) };
+  return { ...doc, biases, attribution: attribute(ep, items, biases, { failedAssumption: doc.expost?.failedAssumption ?? null }) };
 }

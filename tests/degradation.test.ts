@@ -1,7 +1,7 @@
 // 降级集成测试：外部数据源和模型都换成可控的假实现，在临时数据库上跑完整流程，
 // 验证数据缺失、接口失败、额度用完、模型故障、模型输出不合规时，系统给出明确的降级结果，不会当作正常。
 
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,7 +50,7 @@ vi.mock("@/lib/sources/fuyao-api", () => ({
         },
   anomalies: async () => (state.anomalies === "empty" ? { status: "empty", data: { truncated: false, items: [] }, meta: meta("anomaly") } : ok("anomaly", { truncated: false, items: [] })),
   hotRank: async () => ok("hot", [{ date: "2026-06-19", rank: 300 }]),
-  dragonTiger: async () => ok("lhb", []),
+  dragonTiger: async () => (state.lhb === "failed" ? fail("lhb") : ok("lhb", [])),
   searchTicker: async () => ok("search", []),
 }));
 
@@ -183,6 +183,25 @@ describe("数据源故障", () => {
     expect(set.items.some((e) => e.kind === "trade")).toBe(true);
   });
 
+  it("新闻和公告都没取到、也没找到负面信息：选择性关注是无法判定，不是未命中", async () => {
+    const { ws } = await setup();
+    state.news = "failed";
+    state.ifind = "failed";
+    const r = await rules.rulesForWorkspace(ws);
+    const b8 = r.episodes[0].biases.find((b) => b.ruleId === "B8")!;
+    expect(b8.outcome).toBe("undetermined");
+    expect(b8.finding).toContain("没有取到");
+  });
+
+  it("重新生成复盘时强制刷新证据集，不复用旧缓存", async () => {
+    const { ws, ep } = await setup();
+    const first = await pipeline.buildEvidenceSet(ws, ep);
+    await new Promise((r) => setTimeout(r, 5));
+    await review.generateReview(ws, ep.id, () => {}, { refreshEvidence: true });
+    const after = await pipeline.buildEvidenceSet(ws, ep);
+    expect(after.builtAt).toBeGreaterThan(first.builtAt);
+  });
+
   it("交易日历失败：校验跳过交易日检查，但其余校验照常", async () => {
     state.calendar = "failed";
     const { a } = await setup();
@@ -230,6 +249,49 @@ describe("模型故障和输出校验", () => {
   });
 });
 
+describe("决策前检查的降级", () => {
+  const input = { query: "600001", side: "buy" as const, reason: "看好业绩", planStop: 8, planTarget: null };
+  // 假数据的交易日只到 8 月底，把"现在"放到 8 月中，近 3 个交易日才有龙虎榜可查
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-20T10:00:00+08:00"));
+  });
+  afterEach(() => vi.useRealTimers());
+
+
+  it("龙虎榜没取到：热度检查是无法判断，不显示没上榜", async () => {
+    const { runPrecheck } = await import("@/lib/precheck");
+    const { ws } = await setup();
+    state.lhb = "failed";
+    const r = await runPrecheck(input, ws, null);
+    if ("error" in r) throw new Error(r.error);
+    const hot = r.checks.find((c) => c.trigger === "hot")!;
+    expect(hot.status).toBe("unknown");
+    expect(hot.detail).not.toContain("没上龙虎榜");
+    expect(r.sourceErrors.join("；")).toContain("龙虎榜");
+  });
+
+  it("新闻和公告没取到、也没找到负面信息：负面信息检查是无法判断；买入时恐慌卖出检查是不适用", async () => {
+    const { runPrecheck } = await import("@/lib/precheck");
+    const { ws } = await setup();
+    state.news = "failed";
+    state.ifind = "failed";
+    const r = await runPrecheck(input, ws, null);
+    if ("error" in r) throw new Error(r.error);
+    expect(r.checks.find((c) => c.trigger === "attention")).toMatchObject({ status: "unknown" });
+    expect(r.checks.find((c) => c.trigger === "panic")).toMatchObject({ status: "na" });
+  });
+
+  it("数据都取到：有负面新闻时触发，热度两项都没命中时才是未触发", async () => {
+    const { runPrecheck } = await import("@/lib/precheck");
+    const { ws } = await setup();
+    const r = await runPrecheck(input, ws, null);
+    if ("error" in r) throw new Error(r.error);
+    expect(r.checks.find((c) => c.trigger === "attention")).toMatchObject({ status: "triggered" });
+    expect(r.checks.find((c) => c.trigger === "hot")).toMatchObject({ status: "clear" });
+  });
+});
+
 describe("用户数据的保留和删除", () => {
   it("一键删除只删当前工作区；示例组合不能删", async () => {
     const { purgeWorkspace } = await import("@/lib/retention");
@@ -238,6 +300,30 @@ describe("用户数据的保留和删除", () => {
     expect(purgeWorkspace(ws)).toBe(2);
     expect(pipeline.loadTrades(ws)).toEqual([]);
     expect(purgeWorkspace("demo")).toBe(0);
+  });
+
+  it("揭晓前的判断每笔只能写一次；决策记录补充理由时新增版本，原版本保留；可以一键删除", async () => {
+    const rec = await import("@/lib/records");
+    const { purgeWorkspace } = await import("@/lib/retention");
+    const { ws, ep } = await setup();
+    const vid = `visitor-${n}`;
+    const tradeId = ep.trades[0].id;
+    expect(rec.addPrejudgment(vid, ws, ep.id, { tradeId, verdict: "gaps", worry: "涨得太急", afterReveal: false })).toBe(true);
+    expect(rec.addPrejudgment(vid, ws, ep.id, { tradeId, verdict: "sufficient", worry: null, afterReveal: false })).toBe(false);
+    expect(rec.listPrejudgments(vid, ws, ep.id)).toMatchObject([{ tradeId, verdict: "gaps", worry: "涨得太急" }]);
+
+    const snapshot = { asOf: "2026-08-19", checks: [{ text: "下单前写好止损和目标", status: "clear", detail: "止损 8%" }], facts: [], sourceErrors: [] };
+    const root = rec.addNote(vid, { code: "600001.SH", name: "测试股份", side: "buy", reason: "看好业绩", planStop: 8, planTarget: null, snapshot })!;
+    expect(rec.addNoteVersion(vid, root, { reason: "看好业绩；补充：订单已确认", planStop: 6, planTarget: 20 })).toBe(2);
+    expect(rec.addNoteVersion("someone-else", root, { reason: "x", planStop: null, planTarget: null })).toBeNull();
+    const [note] = rec.listNotes(vid);
+    expect(note.versions.map((v) => [v.version, v.reason])).toEqual([[1, "看好业绩"], [2, "看好业绩；补充：订单已确认"]]);
+    expect(note.snapshot?.checks[0].detail).toBe("止损 8%");
+
+    purgeWorkspace(ws); // 删除导入数据时，这个工作区的判断一起删
+    expect(rec.listPrejudgments(vid, ws, ep.id)).toEqual([]);
+    expect(rec.purgeVisitorRecords(vid)).toBe(2);
+    expect(rec.listNotes(vid)).toEqual([]);
   });
 
   it("超过 7 天的导入数据自动清理，新导入的保留", async () => {
