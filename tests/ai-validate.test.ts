@@ -85,3 +85,16 @@ describe("数字核对的边界", () => {
     expect(detectLeakage("主力资金净流出", ["主力资金净流出"], "D-17 异动：主力资金净流出 25.56 亿元")).toEqual([]);
   });
 });
+
+describe("合规过滤的边界", () => {
+  it("用户计划里的目标价不拦，给出具体价格的目标价要拦", () => {
+    expect(filterText("下单前把目标价、止盈条件写在同一行").hits).toEqual([]);
+    expect(filterText("证据中没有目标价测算").hits).toEqual([]);
+    expect(filterText("目标价 180 元").hits[0].reason).toBe("目标价");
+    expect(filterText("机构给予目标价").hits[0].reason).toBe("目标价");
+  });
+
+  it("报告期写法不当成数字", () => {
+    expect(numbersSupported("只有2026Q1与2025年报数据", ["无关"]).ok).toBe(true);
+  });
+});

@@ -58,7 +58,8 @@ function item(e: Evidence, time: string, anon?: Anonymizer, timing?: string): Pa
     time,
     timing,
     title: f(e.title) as string,
-    detail: f(e.detail?.slice(0, 220)),
+    // 程序算出的指标说明里有拆解数字，不截断；新闻、公告等长文本截到 220 字
+    detail: f(e.kind === "computed" ? e.detail : e.detail?.slice(0, 220)),
     value: e.value,
     unit: e.unit,
     caliber: e.caliber,

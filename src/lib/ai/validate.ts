@@ -40,8 +40,8 @@ export interface CheckContext {
 }
 
 const NUM = /-?\d+(?:\.\d+)?/g;
-// 日期写法（2026-06-22、D-3、7-06、6月22日、2026年）不参与数字核对
-const DATE = /20\d{2}-\d{2}-\d{2}|D[+-]\d+|(?<![\d.])\d{1,2}-\d{1,2}(?![\d.])|\d{1,2}月\d{1,2}日|20\d{2}年/g;
+// 日期和报告期写法（2026-06-22、D-3、7-06、6月22日、2026年、2026Q1）不参与数字核对
+const DATE = /20\d{2}-\d{2}-\d{2}|D[+-]\d+|(?<![\d.])\d{1,2}-\d{1,2}(?![\d.])|\d{1,2}月\d{1,2}日|(?:20\d{2})?[Qq][1-4]|20\d{2}年/g;
 
 function numbersIn(s: string): number[] {
   return (s.replace(DATE, " ").match(NUM) ?? []).map(Number);
