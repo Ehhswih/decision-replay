@@ -8,6 +8,8 @@ import { barTiming, dayTiming, derivedTiming } from "@/lib/domain/pit";
 import { decodeCsv, parseTradesCsv, type ParsedTrade } from "@/lib/domain/trades";
 import { buildEpisodes, validateTrades, type MarketContext } from "@/lib/domain/position";
 import {
+  adjFactor,
+  adjustedCostPath,
   anomalyEvidence,
   barOn,
   isLikelyOriginalDisclosure,
@@ -29,6 +31,8 @@ import { searchNotice } from "@/lib/sources/ifind-api";
 import type { FetchStatus, SourceError, SourceResult } from "@/lib/sources/types";
 
 export const DEMO_WORKSPACE = "demo";
+/** 证据生成逻辑改了就加 1，旧缓存自动失效 */
+const EVIDENCE_VERSION = 2;
 const MARKET_INDEX = { code: "000300.SH", name: "沪深300" };
 
 // ---------------- 成交的存取 ----------------
@@ -148,6 +152,7 @@ export interface EvidenceSet {
   sources: SourceStatus[];
   newsComplete: boolean;
   builtAt: number;
+  version: number;
 }
 
 const pctChange = (bars: Bar[], from: string, to: string) => {
@@ -160,7 +165,10 @@ export async function buildEvidenceSet(workspace: string, episode: Episode, forc
   const key = `${workspace}/${episode.id}`;
   if (!force) {
     const row = db().prepare("SELECT json FROM evidence_sets WHERE episode_id = ?").get(key) as { json: string } | undefined;
-    if (row) return JSON.parse(row.json);
+    if (row) {
+      const cachedSet = JSON.parse(row.json) as EvidenceSet;
+      if (cachedSet.version === EVIDENCE_VERSION) return cachedSet;
+    }
   }
 
   const today = shDate(Date.now());
@@ -272,7 +280,50 @@ export async function buildEvidenceSet(workspace: string, episode: Episode, forc
           tradeId: t.id,
         });
       }
+      const costAt = [...(adjustedCostPath(episode, series) ?? [])].reverse().find((p) => p.ts < t.ts);
+      const f = adjFactor(series, shDate(t.ts));
+      if (costAt && f != null) {
+        const pct = ((t.price * f) / costAt.avgCost - 1) * 100;
+        items.push({
+          id: `calc:vscost:${t.id}`,
+          kind: "computed",
+          title: `卖出价相对持仓成本 ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%`,
+          detail: `成交价折算 ${(t.price * f).toFixed(2)}，当时平均成本 ${costAt.avgCost.toFixed(2)}（前复权，不含费用）`,
+          value: +pct.toFixed(2),
+          unit: "%",
+          caliber: "前复权；卖出价 ÷ 当时平均持仓成本 − 1，不含手续费和分红",
+          source: "程序计算",
+          endpoint: "/api/a-share/prices/historical",
+          inputs: episode.trades.filter((x) => x.ts <= t.ts).map((x) => `trade:${x.id}`),
+          eventTime: t.ts,
+          availableAt: t.ts,
+          precision: "ms",
+          fetchedAt: null,
+          status: "ok",
+          tradeId: t.id,
+        });
+      }
     }
+  }
+
+  // 持有天数（交易日）
+  {
+    const holdDays = days.filter((d) => d >= openDate && d <= closeDate).length;
+    items.push({
+      id: `calc:hold:${episode.id}`,
+      kind: "computed",
+      title: `${episode.closeTs ? "持有" : "截至今天已持有"} ${holdDays} 个交易日（${openDate} ~ ${closeDate}）`,
+      value: holdDays,
+      unit: "交易日",
+      caliber: "首次买入日到清仓日，两端都算",
+      source: "程序计算",
+      endpoint: "/api/a-share/calendar/trading-days",
+      eventTime: episode.closeTs ?? Date.now(),
+      availableAt: episode.closeTs ?? Date.now(),
+      precision: "ms",
+      fetchedAt: null,
+      status: cal.data ? "ok" : "partial",
+    });
   }
 
   // 除权除息
@@ -425,6 +476,7 @@ export async function buildEvidenceSet(workspace: string, episode: Episode, forc
     sources,
     newsComplete: news.complete,
     builtAt: Date.now(),
+    version: EVIDENCE_VERSION,
   };
   // 关键数据失败时不缓存，下次重试
   if (!sources.some((s) => s.critical && s.status === "failed")) {
