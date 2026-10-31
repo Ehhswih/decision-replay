@@ -1,6 +1,6 @@
 import { connection } from "next/server";
 import { rulesForWorkspace } from "@/lib/rules-review";
-import { getReview } from "@/lib/ai/review";
+import { getReview, refreshDerived } from "@/lib/ai/review";
 import { currentWorkspace } from "@/lib/workspace";
 
 export async function GET() {
@@ -9,8 +9,10 @@ export async function GET() {
   const r = await rulesForWorkspace(ws.id);
   const episodes = r.episodes.map((e) => {
     const rv = getReview(ws.id, e.episode.id);
-    // 有 AI 复盘时用复盘里更新过的偏差和归因（B8 由 AI 核对定论）
-    return rv.review ? { ...e, biases: rv.review.biases, attribution: rv.review.attribution, reviewStatus: rv.status, lessons: rv.review.lessons.length } : { ...e, reviewStatus: rv.status, lessons: 0 };
+    if (!rv.review) return { ...e, reviewStatus: rv.status, lessons: 0 };
+    // 有 AI 复盘时，用最新规则 + AI 的核对结果重新算偏差和归因
+    const doc = refreshDerived(rv.review, e.episode, r.sets.get(e.episode.id)!.items, e.biases);
+    return { ...e, biases: doc.biases, attribution: doc.attribution, reviewStatus: rv.status, lessons: doc.lessons.length };
   });
   return Response.json({ workspace: ws, episodes, portfolio: r.portfolio, issues: r.issues, sources: r.sources });
 }

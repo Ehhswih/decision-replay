@@ -298,3 +298,17 @@ export function startReview(workspace: string, episodeId: string, force = false)
     .finally(() => running.delete(key));
   return { status: "running" as const, stage: "排队中" };
 }
+
+/**
+ * 规则逻辑更新后，用已经生成的 AI 核对结果重新计算 B8 和归因，不用重新调模型。
+ * baseBiases 是按最新规则算出的结果，AI 部分（当时视角、叙述、教训）原样保留。
+ */
+export function refreshDerived(doc: ReviewDoc, ep: Episode, items: Evidence[], baseBiases: BiasResult[]): ReviewDoc {
+  const evidence = new Map(items.map((e) => [e.id, e]));
+  const biases = baseBiases.map((b) => {
+    if (b.ruleId !== "B8" || !b.tradeId) return b;
+    const view = doc.exAnte.find((v) => v.tradeId === b.tradeId);
+    return view ? resolveB8(b, view.negativesCheck, evidence) : b;
+  });
+  return { ...doc, biases, attribution: attribute(ep, items, biases) };
+}

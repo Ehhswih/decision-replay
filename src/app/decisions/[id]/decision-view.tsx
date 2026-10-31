@@ -35,6 +35,7 @@ export default function DecisionView() {
   const [decisionId, setDecisionId] = useState<string | null>(null);
   const [open, setOpen] = useState<Evidence | null>(null);
   const [added, setAdded] = useState<Set<string>>(new Set());
+  const [isDemo, setIsDemo] = useState(true);
 
   useEffect(() => {
     fetch("/api/rules")
@@ -49,6 +50,10 @@ export default function DecisionView() {
       .then((r) => r.json())
       .then((j) => (j.error ? setError(j.error) : setSet(j)))
       .catch(() => setError("读取证据失败"));
+    fetch("/api/workspace")
+      .then((r) => r.json())
+      .then((w) => setIsDemo(!!w.isDemo))
+      .catch(() => {});
     fetch("/api/checklist")
       .then((r) => r.json())
       .then((j) => setAdded(new Set((j.items ?? []).map((x: { sourceLessonId: string | null }) => x.sourceLessonId).filter(Boolean))));
@@ -221,7 +226,7 @@ export default function DecisionView() {
             <RevealPanel review={review} biases={biases} attribution={attribution} evidence={evidence} decisionTs={decisionTs} onOpen={setOpen} onAddLesson={addLesson} addedLessons={added} aiState={aiState} />
           )}
 
-          {review && (
+          {review && !isDemo && (
             <div className="text-right">
               <Button variant="ghost" size="sm" onClick={() => generate(true)} disabled={rv.status === "running"}>
                 重新生成复盘

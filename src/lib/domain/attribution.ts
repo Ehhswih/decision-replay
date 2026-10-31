@@ -84,8 +84,8 @@ export function attribute(ep: Episode, items: Evidence[], biases: BiasResult[]):
       classify(e, firstBuy) === "ex_post" &&
       (ep.closeTs == null || e.availableAt <= ep.closeTs),
   ).sort((x, y) => priority(x) - priority(y) || (x.availableAt as number) - (y.availableAt as number));
-  // 选择性关注只有在 AI 确认命中后才挡住"不可预见"
-  const exanteNeg = own.find((b) => b.ruleId === "B8" && b.outcome === "hit");
+  // 选择性关注是 AI 判断：只有至少 2 条重要且相关的负面信息被忽略（置信度"中"）时，才挡住"不可预见"
+  const exanteNeg = own.find((b) => b.ruleId === "B8" && b.outcome === "hit" && b.confidence === "mid");
 
   let errorType: ErrorType;
   let errorReason: Point;

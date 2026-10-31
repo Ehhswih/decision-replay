@@ -9,6 +9,7 @@ import type { Evidence } from "@/lib/domain/evidence";
 export interface NegativeCheck {
   evidenceId: string;
   addressed: boolean;
+  note?: string;
   /** AI 判断这条负面信息是否直接动摇买入逻辑；缺省视为相关 */
   relevant?: boolean;
 }
@@ -22,7 +23,15 @@ export function resolveB8(b: BiasResult, checks: NegativeCheck[], evidence: Map<
   const checked = checks.filter((x) => ["news", "notice", "anomaly"].includes(evidence.get(x.evidenceId)?.kind ?? ""));
   if (!checked.length) return b;
   const ignored = checked.filter((x) => !x.addressed);
-  const material = ignored.filter((x) => isMaterial(evidence.get(x.evidenceId)) && x.relevant !== false);
+  // AI 自己说"无法判断"的不算相关；同一标题只算一次
+  const unsure = (x: NegativeCheck) => /无法判断|不可见|看不到|无法确认|不确定/.test(x.note ?? "");
+  const seen = new Set<string>();
+  const material = ignored.filter((x) => {
+    const e = evidence.get(x.evidenceId);
+    if (!isMaterial(e) || x.relevant === false || unsure(x) || seen.has(e!.title)) return false;
+    seen.add(e!.title);
+    return true;
+  });
   const titles = (l: NegativeCheck[]) => l.slice(0, 2).map((x) => evidence.get(x.evidenceId)?.title).join("；");
   if (!ignored.length) {
     return { ...b, outcome: "not_hit", needsAi: false, confidence: "low", evidenceIds: checked.map((x) => x.evidenceId), finding: `买入前的 ${checked.length} 条负面信息在理由里都有回应` };

@@ -58,7 +58,7 @@ export function validateTrades(trades: Trade[], ctx: MarketContext): Issue[] {
         severity: "error",
         code: "price_out_of_range",
         field: "成交价格",
-        message: `成交价 ${t.price} 不在当日不复权最低价 ${bar.low} ~ 最高价 ${bar.high} 之间，可能是录入错误或用了复权价`,
+        message: `成交价 ${t.price} 不在当日不复权最低价 ${+bar.low.toFixed(3)} ~ 最高价 ${+bar.high.toFixed(3)} 之间，可能是录入错误或用了复权价`,
       });
     }
 
