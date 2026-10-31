@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { TimingBadge } from "@/components/timing-badge";
@@ -13,6 +13,21 @@ export default function Home() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [issues, setIssues] = useState<ImportIssue[]>([]);
+  const [ws, setWs] = useState<{ isDemo: boolean; retentionDays: number } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/workspace")
+      .then((r) => r.json())
+      .then(setWs)
+      .catch(() => setWs(null));
+  }, []);
+
+  const purge = async () => {
+    if (!window.confirm("删除你导入的成交和生成的复盘？删除后不能恢复。清单不受影响。")) return;
+    const r = await fetch("/api/workspace?purge=1", { method: "DELETE" }).then((x) => x.json());
+    toast.success(`已删除 ${r.purged} 笔成交和相关复盘`);
+    setWs({ isDemo: true, retentionDays: ws?.retentionDays ?? 7 });
+  };
 
   const useDemo = async () => {
     await fetch("/api/workspace", { method: "DELETE" });
@@ -71,12 +86,23 @@ export default function Home() {
                 />
             </label>
           </div>
+          {ws && !ws.isDemo && (
+            <div className="rounded-md border border-border bg-card p-3 text-sm flex flex-wrap items-center gap-3">
+              <span>你正在看自己导入的成交。导入的数据在服务器上保留 {ws.retentionDays} 天，之后自动删除。</span>
+              <Button size="sm" variant="ghost" onClick={() => router.push("/decisions")}>
+                查看复盘
+              </Button>
+              <Button size="sm" variant="ghost" className="text-destructive" onClick={purge}>
+                删除我导入的数据
+              </Button>
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">
             支持券商导出的 CSV（UTF-8 或 GBK），常见列名会自动识别。
             <a href="/trades-template.csv" download className="text-exante underline underline-offset-2 ml-1">
               下载模板
             </a>
-            。数据只用于你自己的复盘，不需要登录。
+            。数据只用于你自己的复盘，不需要登录，导入的成交 7 天后自动删除，也可以随时手动删除。
           </p>
           {issues.length > 0 && (
             <ul className="text-sm space-y-1 rounded-md border border-border bg-card p-3">

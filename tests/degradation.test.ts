@@ -229,3 +229,24 @@ describe("模型故障和输出校验", () => {
     expect(b8).toMatchObject({ outcome: "hit", confidence: "low", evidenceIds: ["news:n1"] });
   });
 });
+
+describe("用户数据的保留和删除", () => {
+  it("一键删除只删当前工作区；示例组合不能删", async () => {
+    const { purgeWorkspace } = await import("@/lib/retention");
+    const { ws } = await setup();
+    expect(pipeline.loadTrades(ws).length).toBe(2);
+    expect(purgeWorkspace(ws)).toBe(2);
+    expect(pipeline.loadTrades(ws)).toEqual([]);
+    expect(purgeWorkspace("demo")).toBe(0);
+  });
+
+  it("超过 7 天的导入数据自动清理，新导入的保留", async () => {
+    const { cleanupExpired } = await import("@/lib/retention");
+    const { ws } = await setup();
+    const r1 = cleanupExpired(Date.now());
+    expect(pipeline.loadTrades(ws).length).toBe(2);
+    const r2 = cleanupExpired(Date.now() + 8 * 86_400_000);
+    expect(r2.workspaces).toBeGreaterThan(r1.workspaces);
+    expect(pipeline.loadTrades(ws)).toEqual([]);
+  });
+});

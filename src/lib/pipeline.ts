@@ -66,10 +66,10 @@ export function saveTrades(workspace: string, trades: ParsedTrade[]) {
     conn.prepare("DELETE FROM evidence_sets WHERE workspace = ?").run(workspace);
     conn.prepare("DELETE FROM reviews WHERE workspace = ?").run(workspace);
     const ins = conn.prepare(
-      "INSERT INTO trades (id, workspace, row_no, ts, time_known, code, name, side, price, qty, fee, reason, plan_stop, plan_target) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO trades (id, workspace, row_no, ts, time_known, code, name, side, price, qty, fee, reason, plan_stop, plan_target, imported_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     for (const t of trades) {
-      ins.run(randomUUID().slice(0, 8), workspace, t.rowNo, t.ts, t.timeKnown ? 1 : 0, t.code, t.name, t.side, t.price, t.qty, t.fee, t.reason, t.planStop, t.planTarget);
+      ins.run(randomUUID().slice(0, 8), workspace, t.rowNo, t.ts, t.timeKnown ? 1 : 0, t.code, t.name, t.side, t.price, t.qty, t.fee, t.reason, t.planStop, t.planTarget, Date.now());
     }
     conn.exec("COMMIT");
   } catch (e) {

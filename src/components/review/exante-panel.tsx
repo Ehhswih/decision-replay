@@ -14,6 +14,7 @@ const CHECK_TONE = { supported: "ok", contradicted: "danger", unverifiable: "neu
 /** 回到当时：只看决策时刻之前能知道的东西 */
 export function ExAntePanel({
   trade,
+  plan,
   view,
   biases,
   evidence,
@@ -21,25 +22,29 @@ export function ExAntePanel({
   aiState,
 }: {
   trade: EpisodeTrade;
+  /** 买入时写的止损和目标（卖出决策要对照它） */
+  plan: EpisodeTrade | null;
   view: ExAnteView | undefined;
   biases: BiasResult[];
   evidence: Map<string, Evidence>;
   onOpen: (e: Evidence) => void;
   aiState: React.ReactNode;
 }) {
-  const signals = biases.filter((b) => b.tradeId === trade.id && ["B1", "B2"].includes(b.ruleId));
+  const isSell = trade.side === "sell";
+  // 卖出时的信号只用卖出那一刻已知的数据；卖出后的走势（事后代价）在这里不显示
+  const signals = biases.filter((b) => b.tradeId === trade.id && (isSell ? ["B3", "B6", "B7"] : ["B1", "B2"]).includes(b.ruleId));
+  const planSource = isSell ? plan : trade;
+  const planText = planSource
+    ? [planSource.planStop != null ? `止损 ${planSource.planStop}%` : null, planSource.planTarget != null ? `目标 +${planSource.planTarget}%` : null].filter(Boolean).join("，")
+    : "";
   return (
     <div className="space-y-4">
-      <Section title={`${fmtDateTime(trade.ts)} 下单时`} aside={<span className="text-xs text-muted-foreground num">{trade.side === "buy" ? "买入" : "卖出"} {trade.qty} 股 @ {trade.price}</span>}>
+      <Section title={`${fmtDateTime(trade.ts)} ${isSell ? "卖出时" : "下单时"}`} aside={<span className="text-xs text-muted-foreground num">{isSell ? "卖出" : "买入"} {trade.qty} 股 @ {trade.price}</span>}>
         <dl className="grid sm:grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5 text-sm">
           <dt className="text-muted-foreground">当时理由</dt>
           <dd>{trade.reason ?? <span className="text-muted-foreground">没有记录</span>}</dd>
-          <dt className="text-muted-foreground">计划</dt>
-          <dd>
-            {[trade.planStop != null ? `止损 ${trade.planStop}%` : null, trade.planTarget != null ? `目标 +${trade.planTarget}%` : null].filter(Boolean).join("，") || (
-              <span className="text-muted-foreground">没有写止损或目标</span>
-            )}
-          </dd>
+          <dt className="text-muted-foreground">{isSell ? "买入时的计划" : "计划"}</dt>
+          <dd>{planText || <span className="text-muted-foreground">没有写止损或目标</span>}</dd>
           {!trade.timeKnown && (
             <>
               <dt className="text-muted-foreground">时刻</dt>
@@ -62,7 +67,13 @@ export function ExAntePanel({
         )}
       </Section>
 
-      {!view ? (
+      {isSell ? (
+        <Section title="卖出时能看到什么">
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            AI 的当时视角只针对买入决策生成。卖出这一刻，上面的信号都由程序用卖出前已知的数据算出；右侧「当时可知」一栏是卖出前已经公开的全部证据，卖出之后的走势和事件仍然遮住，点「揭晓结果」再看。
+          </p>
+        </Section>
+      ) : !view ? (
         <Section title="当时能看到什么">{aiState}</Section>
       ) : (
         <>

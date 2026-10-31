@@ -9,10 +9,11 @@ export async function GET() {
   const r = await rulesForWorkspace(ws.id);
   const episodes = r.episodes.map((e) => {
     const rv = getReview(ws.id, e.episode.id);
-    if (!rv.review) return { ...e, reviewStatus: rv.status, lessons: 0 };
+    const holdDays = r.sets.get(e.episode.id)?.items.find((x) => x.id === `calc:hold:${e.episode.id}`)?.value ?? null;
+    if (!rv.review) return { ...e, holdDays, reviewStatus: rv.status, lessons: 0 };
     // 有 AI 复盘时，用最新规则 + AI 的核对结果重新算偏差和归因
     const doc = refreshDerived(rv.review, e.episode, r.sets.get(e.episode.id)!.items, e.biases);
-    return { ...e, biases: doc.biases, attribution: doc.attribution, reviewStatus: rv.status, lessons: doc.lessons.length };
+    return { ...e, holdDays, biases: doc.biases, attribution: doc.attribution, reviewStatus: rv.status, lessons: doc.lessons.length };
   });
   return Response.json({ workspace: ws, episodes, portfolio: r.portfolio, issues: r.issues, sources: r.sources });
 }

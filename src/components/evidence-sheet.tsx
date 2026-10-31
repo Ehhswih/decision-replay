@@ -7,6 +7,8 @@ import type { Evidence } from "@/lib/domain/evidence";
 
 export function EvidenceSheet({ evidence, decisionTs, onClose }: { evidence: Evidence | null; decisionTs: number; onClose: () => void }) {
   const e = evidence;
+  // 链接来自外部数据，只允许 http/https
+  const url = e?.url && /^https?:\/\//i.test(e.url) ? e.url : null;
   return (
     <Sheet open={!!e} onOpenChange={(o) => !o && onClose()}>
       <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
@@ -41,8 +43,8 @@ export function EvidenceSheet({ evidence, decisionTs, onClose }: { evidence: Evi
                 {e.fetchedAt && <Row k="抓取时间" v={fmtDateTime(e.fetchedAt)} />}
                 {e.inputs?.length ? <Row k="计算用到" v={<span className="text-xs break-all">{e.inputs.join("，")}</span>} /> : null}
               </dl>
-              {e.url && (
-                <a href={e.url} target="_blank" rel="noreferrer" className="inline-block text-exante underline underline-offset-2 text-[13px]">
+              {url && (
+                <a href={url} target="_blank" rel="noreferrer noopener" className="inline-block text-exante underline underline-offset-2 text-[13px]">
                   查看原文
                 </a>
               )}

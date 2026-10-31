@@ -72,6 +72,7 @@ await check("示例组合：切出持仓段并给出规则结果", async () => {
   assert(episodes.length >= 10, `只有 ${episodes.length} 个持仓段`);
   assert(r.json.issues.filter((i) => i.severity === "error").length === 0, "示例组合不应有校验错误");
   assert(episodes.every((e) => e.attribution?.quadrant), "有持仓段缺少过程/结果评级");
+  assert(episodes.every((e) => typeof e.holdDays === "number"), "有持仓段缺少持有天数");
   const b4 = r.json.portfolio.find((p) => p.ruleId === "B4");
   assert(b4?.outcome === "hit", "处置效应应命中");
   return `${episodes.length} 段，B4 ${b4.finding.slice(0, 30)}…`;
@@ -204,10 +205,14 @@ await check("导入：GBK 编码的券商导出（列名不同）能识别", asy
   assert(rules.json.episodes.length === 1 && rules.json.issues.filter((i) => i.severity === "error").length === 0, "GBK 导入后应有 1 个持仓段且无错误");
 });
 
-await check("回到示例组合", async () => {
-  await req("/api/workspace", { method: "DELETE" });
+await check("隐私：一键删除导入的数据并回到示例组合", async () => {
+  const before = await req("/api/workspace");
+  assert(!before.json.isDemo && before.json.retentionDays === 7, "导入后应在自己的工作区，保留 7 天");
+  const d = await req("/api/workspace?purge=1", { method: "DELETE" });
+  assert(d.json.purged === 2, `应删除 2 笔成交，实际 ${d.json.purged}`);
   const w = await req("/api/workspace");
   assert(w.json.isDemo, "没有回到示例组合");
+  return `删除 ${d.json.purged} 笔`;
 });
 
 await check("数据状态：配置齐全、iFinD 额度未用完", async () => {

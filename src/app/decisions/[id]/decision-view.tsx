@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { KlineChart, type ChartEvent, type ChartTrade } from "@/components/kline-chart";
@@ -36,6 +36,8 @@ export default function DecisionView() {
   const [open, setOpen] = useState<Evidence | null>(null);
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [isDemo, setIsDemo] = useState(true);
+  const [wsLoaded, setWsLoaded] = useState(false);
+  const autoStarted = useRef(false);
 
   useEffect(() => {
     fetch("/api/rules")
@@ -52,7 +54,10 @@ export default function DecisionView() {
       .catch(() => setError("读取证据失败"));
     fetch("/api/workspace")
       .then((r) => r.json())
-      .then((w) => setIsDemo(!!w.isDemo))
+      .then((w) => {
+        setIsDemo(!!w.isDemo);
+        setWsLoaded(true);
+      })
       .catch(() => {});
     fetch("/api/checklist")
       .then((r) => r.json())
@@ -89,9 +94,21 @@ export default function DecisionView() {
     setTimeout(loop, 1500);
   };
 
+  // 导入的数据：打开一个还没有复盘的持仓段时自动开始生成（示例组合已预生成）
+  useEffect(() => {
+    if (wsLoaded && !isDemo && rv.status === "none" && set && !autoStarted.current) {
+      autoStarted.current = true;
+      generate(false);
+    }
+  });
+
   const episode = rules?.episode ?? set?.episode ?? null;
   const buys = useMemo(() => episode?.trades.filter((t) => t.side === "buy") ?? [], [episode]);
-  const decision = buys.find((t) => t.id === decisionId) ?? buys[0];
+  // 每笔成交都是一个决策点：买入、加仓、卖出都可以"回到当时"
+  const points = useMemo(() => episode?.trades ?? [], [episode]);
+  const decision = points.find((t) => t.id === decisionId) ?? buys[0];
+  const plan = buys.find((t) => t.planStop != null || t.planTarget != null) ?? null;
+  const pointLabel = (t: (typeof points)[number]) => (t.side === "sell" ? (t.positionAfter > 0 ? "减仓" : "卖出") : t.id === buys[0]?.id ? "买入" : "加仓");
   const evidence = useMemo(() => new Map((set?.items ?? []).map((e) => [e.id, e])), [set]);
   const review = rv.review ?? null;
   const biases = review?.biases ?? rules?.biases ?? [];
@@ -177,16 +194,16 @@ export default function DecisionView() {
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
-          {buys.length > 1 && (
+          {points.length > 1 && (
             <div className="flex items-center gap-1 text-xs" role="group" aria-label="选择决策点">
               <span className="text-muted-foreground mr-1">决策点</span>
-              {buys.map((t, i) => (
+              {points.map((t) => (
                 <button
                   key={t.id}
                   onClick={() => setDecisionId(t.id)}
                   className={cn("px-2 py-1 rounded border num", t.id === decision.id ? "border-exante text-exante bg-exante/8" : "border-border text-muted-foreground hover:bg-muted")}
                 >
-                  {fmtDate(t.ts).slice(5)} {i === 0 ? "买入" : "加仓"}
+                  {fmtDate(t.ts).slice(5)} {pointLabel(t)}
                 </button>
               ))}
             </div>
@@ -221,7 +238,7 @@ export default function DecisionView() {
           </div>
 
           {curtain ? (
-            <ExAntePanel trade={decision} view={review?.exAnte.find((v) => v.tradeId === decision.id)} biases={biases} evidence={evidence} onOpen={setOpen} aiState={aiState} />
+            <ExAntePanel trade={decision} plan={plan} view={review?.exAnte.find((v) => v.tradeId === decision.id)} biases={biases} evidence={evidence} onOpen={setOpen} aiState={aiState} />
           ) : (
             <RevealPanel review={review} biases={biases} attribution={attribution} evidence={evidence} decisionTs={decisionTs} onOpen={setOpen} onAddLesson={addLesson} addedLessons={added} aiState={aiState} />
           )}

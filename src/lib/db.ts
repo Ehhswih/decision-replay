@@ -81,6 +81,9 @@ export function db(): DatabaseSync {
     const conn = new DatabaseSync(join(dir, "app.db"));
     conn.exec("PRAGMA journal_mode = WAL;");
     conn.exec(SCHEMA);
+    // 迁移：导入时间（用于导入数据的保留期限）
+    const cols = conn.prepare("PRAGMA table_info(trades)").all() as { name: string }[];
+    if (!cols.some((c) => c.name === "imported_at")) conn.exec("ALTER TABLE trades ADD COLUMN imported_at INTEGER");
     globalForDb.__db = conn;
   }
   return globalForDb.__db;
