@@ -7,9 +7,9 @@ import type { SourceResult } from "./types";
 
 const HOUR = 3600_000;
 
-function call<T>(endpoint: string, params: Record<string, string | number>, ttlMs: number | null) {
+function call<T>(endpoint: string, params: Record<string, string | number>, ttlMs: number | null, timeoutMs?: number) {
   return cached<T>("fuyao", endpoint, params, ttlMs, () =>
-    fuyaoRequest<T>(endpoint, params, { apiKey: process.env.FUYAO_API_KEY }),
+    fuyaoRequest<T>(endpoint, params, { apiKey: process.env.FUYAO_API_KEY, timeoutMs }),
   );
 }
 
@@ -236,6 +236,16 @@ export async function dragonTiger(date: string) {
   return mapResult(
     r,
     (d) => (d.stock_items ?? []).map((x): DragonTigerEntry => ({ code: x.thscode, name: x.name, change: x.change, netValue: x.net_value })),
+    (l) => l.length === 0,
+  );
+}
+
+/** 名称或代码检索 A 股，返回唯一的 thscode 和名称 */
+export async function searchTicker(q: string) {
+  const r = await call<{ item?: { thscode: string; name: string; asset_type: string }[] }>("/api/meta/tickers/search", { q, limit: 10 }, 24 * HOUR, 5000);
+  return mapResult(
+    r,
+    (d) => (d.item ?? []).filter((x) => /\.(SH|SZ|BJ)$/.test(x.thscode) && /a-share|stock/i.test(x.asset_type)).map((x) => ({ code: x.thscode, name: x.name })),
     (l) => l.length === 0,
   );
 }

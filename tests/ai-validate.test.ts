@@ -98,3 +98,27 @@ describe("合规过滤的边界", () => {
     expect(numbersSupported("只有2026Q1与2025年报数据", ["无关"]).ok).toBe(true);
   });
 });
+
+import { resolveB8 } from "@/lib/ai/b8";
+import type { BiasResult } from "@/lib/domain/biases";
+
+describe("选择性关注（B8）定论", () => {
+  const b: BiasResult = { ruleId: "B8", name: "选择性关注", rule: "", scope: "trade", outcome: "undetermined", tradeId: "t", finding: "", evidenceIds: [], alternatives: [], confidence: "low", needsAi: true };
+  const e = (id: string, kind: Evidence["kind"], important = false): Evidence => ({ id, kind, title: id, source: "扶摇", eventTime: 0, availableAt: 0, precision: "ms", fetchedAt: null, status: "ok", important });
+  const map = new Map([e("n1", "news"), e("n2", "news"), e("a1", "anomaly"), e("x1", "notice")].map((x) => [x.id, x]));
+
+  it("没提到公告或异动才算命中；只漏了普通新闻判无法判定；都回应了算未命中", () => {
+    expect(resolveB8(b, [{ evidenceId: "a1", addressed: false }, { evidenceId: "n1", addressed: false }], map)).toMatchObject({ outcome: "hit", evidenceIds: ["a1"], confidence: "low" });
+    expect(resolveB8(b, [{ evidenceId: "n1", addressed: false }, { evidenceId: "n2", addressed: false }], map).outcome).toBe("undetermined");
+    expect(resolveB8(b, [{ evidenceId: "x1", addressed: true }], map).outcome).toBe("not_hit");
+    expect(resolveB8(b, [{ evidenceId: "a1", addressed: false }, { evidenceId: "x1", addressed: false }], map).confidence).toBe("mid");
+  });
+});
+
+describe("B8 相关性", () => {
+  it("和买入逻辑无关的负面异动没提到，不算忽略", () => {
+    const b: BiasResult = { ruleId: "B8", name: "选择性关注", rule: "", scope: "trade", outcome: "undetermined", tradeId: "t", finding: "", evidenceIds: [], alternatives: [], confidence: "low", needsAi: true };
+    const a1: Evidence = { id: "a1", kind: "anomaly", title: "板块集体下跌", source: "扶摇", eventTime: 0, availableAt: 0, precision: "ms", fetchedAt: null, status: "ok" };
+    expect(resolveB8(b, [{ evidenceId: "a1", addressed: false, relevant: false }], new Map([["a1", a1]])).outcome).toBe("undetermined");
+  });
+});

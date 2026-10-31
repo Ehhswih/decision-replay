@@ -9,6 +9,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   const a = await analyzeWorkspace(ws.id);
   const ep = a.episodes.find((e) => e.id === decodeURIComponent(id));
   if (!ep) return Response.json({ error: "找不到这个持仓段" }, { status: 404 });
-  const force = new URL(req.url).searchParams.get("refresh") === "1";
-  return Response.json(await buildEvidenceSet(ws.id, ep, force));
+  const url = new URL(req.url);
+  const set = await buildEvidenceSet(ws.id, ep, url.searchParams.get("refresh") === "1");
+  if (url.searchParams.get("slim") !== "1") return Response.json(set);
+  // 页面用的精简版：不重要的新闻只保留标题，正文截短
+  const items = set.items.map((e) => (e.kind === "news" && !e.important ? { ...e, detail: undefined } : e.detail && e.detail.length > 300 ? { ...e, detail: e.detail.slice(0, 300) + "…" } : e));
+  return Response.json({ ...set, items });
 }

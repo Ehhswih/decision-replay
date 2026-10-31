@@ -36,9 +36,9 @@ ${JSON.stringify(params.pack)}
   "supporting": [{"text": "当时支持买入理由的证据", "evidence_ids": ["..."], "type": "fact", "confidence": "high"}],
   "warnings": [{"text": "当时已经存在的风险信号", "evidence_ids": ["..."], "type": "fact", "confidence": "mid"}],
   "reason_check": [{"claim": "理由里的一个说法（原文）", "status": "supported|contradicted|unverifiable", "text": "依据证据的说明", "evidence_ids": ["..."]}],
-  "negatives_check": [{"evidence_id": "一条当时可知的负面信息的 id", "addressed_in_reason": false, "note": "理由是否提到或回应了它"}]
+  "negatives_check": [{"evidence_id": "一条当时可知的负面信息的 id", "addressed_in_reason": false, "relevant": true, "note": "理由是否提到或回应了它；是否和买入逻辑相关"}]
 }
-supporting 和 warnings 各 2–5 条；reason_check 覆盖理由里的每个主要说法；negatives_check 只针对证据里语气负面的新闻、公告、异动。`;
+supporting 和 warnings 各 2–5 条；reason_check 覆盖理由里的每个主要说法；negatives_check 只针对证据里语气负面的新闻、公告、异动。relevant 表示这条负面信息是否直接动摇理由里的买入逻辑：例如理由基于业绩，涉及业绩、经营、估值、减持、监管或公司风险提示的算相关；泛泛的板块下跌、市场情绪、资金流向不算相关。`;
 }
 
 export function exPostUser(params: { summary: string; trades: string; rules: string; pack: PackItem[] }) {

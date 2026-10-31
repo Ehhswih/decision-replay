@@ -8,6 +8,7 @@ import type { Evidence } from "@/lib/domain/evidence";
 import type { Episode, EpisodeTrade } from "@/lib/domain/types";
 import { rulesForWorkspace } from "@/lib/rules-review";
 import type { EvidenceSet } from "@/lib/pipeline";
+import { resolveB8 } from "./b8";
 import { chatJson } from "./deepseek";
 import { exAntePack, expostPack, packText, type PackItem } from "./pack";
 import { EX_ANTE_SYSTEM, EX_POST_SYSTEM, exAnteUser, exPostUser } from "./prompts";
@@ -21,7 +22,7 @@ export interface ExAnteView {
   supporting: Claim[];
   warnings: Claim[];
   reasonCheck: { claim: string; status: "supported" | "contradicted" | "unverifiable"; text: string; evidenceIds: string[] }[];
-  negativesCheck: { evidenceId: string; addressed: boolean; note: string }[];
+  negativesCheck: { evidenceId: string; addressed: boolean; relevant: boolean; note: string }[];
   leakage: string[];
   packSize: number;
 }
@@ -113,7 +114,7 @@ function ctxFor(pack: PackItem[], evidence: Map<string, Evidence>, log: LogEntry
   return { evidence, exAnteAt, log, stage, alwaysSources, packTexts: [...texts.values()], textOf: (e) => texts.get(e.id) ?? `${e.title} ${e.detail ?? ""} ${e.value ?? ""}` };
 }
 
-type ExAnteOut = { summary?: string; supporting?: unknown; warnings?: unknown; reason_check?: { claim?: string; status?: string; text?: string; evidence_ids?: string[] }[]; negatives_check?: { evidence_id?: string; addressed_in_reason?: boolean; note?: string }[] };
+type ExAnteOut = { summary?: string; supporting?: unknown; warnings?: unknown; reason_check?: { claim?: string; status?: string; text?: string; evidence_ids?: string[] }[]; negatives_check?: { evidence_id?: string; addressed_in_reason?: boolean; relevant?: boolean; note?: string }[] };
 type ExPostOut = { narrative?: string; facts?: unknown; bias_notes?: { rule_id?: string; explanation?: string; alternative?: string }[]; failed_assumption?: { text?: string; evidence_ids?: string[] }; uncertainties?: unknown; lessons?: { text?: string; trigger?: string; evidence_ids?: string[] }[] };
 
 export async function generateReview(workspace: string, episodeId: string, onStage: (s: string) => void = () => {}): Promise<ReviewDoc> {
@@ -171,28 +172,17 @@ export async function generateReview(workspace: string, episodeId: string, onSta
         .filter((x): x is ExAnteView["reasonCheck"][number] => !!x),
       negativesCheck: (r.data.negatives_check ?? [])
         .filter((x) => typeof x.evidence_id === "string" && inPack.has(x.evidence_id))
-        .map((x) => ({ evidenceId: x.evidence_id as string, addressed: x.addressed_in_reason === true, note: anon!.restore(cleanText(x.note, ctx)) })),
+        .map((x) => ({ evidenceId: x.evidence_id as string, addressed: x.addressed_in_reason === true, relevant: x.relevant !== false, note: anon!.restore(cleanText(x.note, ctx)) })),
       leakage,
       packSize: pack.length,
     });
   }
 
-  // 2. B8 选择性关注：用 AI 的核对结果定论，置信度最高为"中"
-  for (const b of biases) {
+  // 2. B8 选择性关注：用 AI 的核对结果定论（AI 核对过的负面信息都在当时视角的证据包里，必然当时可知）
+  for (const [i, b] of biases.entries()) {
     if (b.ruleId !== "B8" || !b.needsAi || !b.tradeId) continue;
     const view = exAnte.find((v) => v.tradeId === b.tradeId);
-    if (!view) continue;
-    // AI 核对过的负面信息都在当时视角的证据包里（必然当时可知），包括关键词没识别出来的
-    const checked = view.negativesCheck.filter((x) => ["news", "notice", "anomaly"].includes(evidence.get(x.evidenceId)?.kind ?? ""));
-    const ignored = checked.filter((x) => !x.addressed);
-    if (!checked.length) continue;
-    b.outcome = ignored.length ? "hit" : "not_hit";
-    b.confidence = ignored.length >= 2 ? "mid" : "low";
-    b.evidenceIds = (ignored.length ? ignored : checked).map((x) => x.evidenceId);
-    b.finding = ignored.length
-      ? `理由没有提到 ${ignored.length} 条当时可知的负面信息：${ignored.slice(0, 2).map((x) => evidence.get(x.evidenceId)?.title).join("；")}`
-      : `买入前的 ${checked.length} 条负面信息在理由里都有回应`;
-    b.needsAi = false;
+    if (view) biases[i] = resolveB8(b, view.negativesCheck, evidence);
   }
   const attribution = attribute(ep, set.items, biases);
 
