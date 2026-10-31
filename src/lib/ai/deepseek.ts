@@ -9,6 +9,15 @@ export type LlmResult<T> =
  * deepseek-flash 是推理模型，会先消耗思考 token，max_tokens 要留够，否则正文为空。
  */
 export async function chatJson<T>(system: string, user: string, opts: { maxTokens?: number; timeoutMs?: number } = {}): Promise<LlmResult<T>> {
+  // 偶发的 JSON 不完整、空输出、网络抖动，重试一次通常就好；仍失败时由调用方降级
+  const first = await chatJsonOnce<T>(system, user, opts);
+  if (first.ok || !["parse", "empty", "network", "timeout"].includes(first.kind)) return first;
+  const second = await chatJsonOnce<T>(system, user, opts);
+  if (!second.ok) return { ...second, message: `重试后仍失败：${second.message}（第一次：${first.message.slice(0, 60)}）`, latencyMs: first.latencyMs + second.latencyMs };
+  return { ...second, latencyMs: first.latencyMs + second.latencyMs };
+}
+
+async function chatJsonOnce<T>(system: string, user: string, opts: { maxTokens?: number; timeoutMs?: number }): Promise<LlmResult<T>> {
   const started = Date.now();
   const key = process.env.DEEPSEEK_API_KEY;
   const model = process.env.DEEPSEEK_MODEL || "deepseek-flash";
